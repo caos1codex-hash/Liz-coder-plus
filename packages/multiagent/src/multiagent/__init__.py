@@ -43,6 +43,23 @@ from .agents.research import ResearchAgent
 from .agents.reviewer import ReviewerAgent
 from .agents.terminal import TerminalAgent
 
+# Sprint 2.2 — Workflow engine
+from .workflow.context import CodeSnippet, ContextManager, FileSnapshot, SharedMessage
+from .workflow.dag import DAG, ValidationResult
+from .workflow.engine import FailoverPolicy, WorkflowEngine, WorkflowExecutionResult
+from .workflow.enums import (
+    FailoverAction,
+    StepCriticality,
+    StepStatus,
+    WorkflowEvent,
+    WorkflowStatus,
+)
+from .workflow.event_bus import Event, EventBus
+from .workflow.load_balancer import AgentMetrics, LoadBalancer, LoadBalancerWeights
+from .workflow.models import Step, Workflow
+from .workflow.orchestrator import WorkflowOrchestrator
+from .workflow.scheduler import ScheduleDecision, Scheduler, SchedulerConfig
+
 __all__ = [
     # Base
     "BaseAgent",
@@ -79,4 +96,30 @@ __all__ = [
     "ResearchAgent",
     "ReviewerAgent",
     "TerminalAgent",
+    # Sprint 2.2 — Workflow
+    "AgentMetrics",
+    "CodeSnippet",
+    "ContextManager",
+    "DAG",
+    "Event",
+    "EventBus",
+    "FailoverAction",
+    "FailoverPolicy",
+    "FileSnapshot",
+    "LoadBalancer",
+    "LoadBalancerWeights",
+    "ScheduleDecision",
+    "Scheduler",
+    "SchedulerConfig",
+    "SharedMessage",
+    "Step",
+    "StepCriticality",
+    "StepStatus",
+    "ValidationResult",
+    "Workflow",
+    "WorkflowEngine",
+    "WorkflowEvent",
+    "WorkflowExecutionResult",
+    "WorkflowOrchestrator",
+    "WorkflowStatus",
 ]
