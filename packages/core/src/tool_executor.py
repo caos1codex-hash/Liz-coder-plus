@@ -8,13 +8,21 @@ Flow:
         → PermissionService evaluates
         → If "deny": return denied result immediately
         → If "confirm": return confirmation request (client must approve)
-        → If "allow": execute tool and return result
+        → If "allow": execute tool with timeout
+            → On timeout: cancel and return timeout error
+            → On error: capture, log, return structured error
+            → On success: return structured result
 
 The executor emits events through the EventBus for auditing.
+Supports timeout, cancellation, execution context, and agent tracking.
+
+Sprint 1.6 — Added timeout, cancellation, context passing, agent
+tracking, structured error handling, and action logging.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -32,11 +40,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for tool execution (seconds).
+DEFAULT_TOOL_TIMEOUT = 30.0
+
 
 class ToolExecutionResult:
-    """Result of a tool execution attempt."""
+    """Result of a tool execution attempt.
 
-    __slots__ = ("tool_name", "decision", "success", "output", "error", "duration_ms")
+    Attributes:
+        tool_name: Name of the tool that was executed.
+        decision: Permission decision ("allow", "confirm", "deny", "timeout").
+        success: Whether the tool executed successfully.
+        output: Tool output string (if any).
+        error: Error message (if any).
+        duration_ms: Execution time in milliseconds.
+        agent_name: Name of the agent that requested the tool.
+        session_id: Session in which the tool was executed.
+        tool_id: Unique id of the tool instance (if available).
+    """
+
+    __slots__ = (
+        "tool_name",
+        "decision",
+        "success",
+        "output",
+        "error",
+        "duration_ms",
+        "agent_name",
+        "session_id",
+        "tool_id",
+    )
 
     def __init__(
         self,
@@ -47,6 +80,9 @@ class ToolExecutionResult:
         output: str = "",
         error: str | None = None,
         duration_ms: int = 0,
+        agent_name: str = "",
+        session_id: str = "",
+        tool_id: str = "",
     ) -> None:
         self.tool_name = tool_name
         self.decision = decision
@@ -54,6 +90,9 @@ class ToolExecutionResult:
         self.output = output
         self.error = error
         self.duration_ms = duration_ms
+        self.agent_name = agent_name
+        self.session_id = session_id
+        self.tool_id = tool_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,25 +102,43 @@ class ToolExecutionResult:
             "output": self.output,
             "error": self.error,
             "duration_ms": self.duration_ms,
+            "agent_name": self.agent_name,
+            "session_id": self.session_id,
+            "tool_id": self.tool_id,
         }
 
 
 class ToolExecutor:
-    """Executes tools with permission gating and event emission.
+    """Executes tools with permission gating, timeout, and event emission.
+
+    Every execution follows the pipeline:
+        1. Emit tool.requested event.
+        2. Permission check (deny/confirm/allow).
+        3. Execute with timeout (if allowed).
+        4. Emit tool.executed or tool.failed event.
 
     Args:
         permission_service: Optional permission evaluator. When None,
-            all tool requests require confirmation (safe default).
+            all tool requests are executed directly (tools with
+            HIGH permission_level should still be confirmed by the
+            PermissionService).
         event_bus: Optional event bus for auditing.
+        default_timeout: Default timeout in seconds for tool execution.
+            Individual tools may override via ``timeout`` kwarg.
     """
 
     def __init__(
         self,
         permission_service: Any | None = None,
         event_bus: EventBus | None = None,
+        *,
+        default_timeout: float = DEFAULT_TOOL_TIMEOUT,
     ) -> None:
         self._permissions = permission_service
         self._bus = event_bus
+        self._default_timeout = default_timeout
+        # Track active tasks for cancellation.
+        self._active_tasks: dict[str, asyncio.Task[Any]] = {}
 
     async def execute(
         self,
@@ -89,6 +146,8 @@ class ToolExecutor:
         params: dict[str, Any],
         *,
         session_id: str = "",
+        agent_name: str = "",
+        timeout: float | None = None,
     ) -> ToolExecutionResult:
         """Execute a tool after permission check.
 
@@ -96,18 +155,30 @@ class ToolExecutor:
             tool: The tool to execute (must satisfy Tool protocol).
             params: Tool-specific parameters.
             session_id: Session context for events/auditing.
+            agent_name: Name of the requesting agent.
+            timeout: Override the default timeout for this execution.
 
         Returns:
             A ToolExecutionResult with the outcome.
         """
         tool_name = tool.name
+        effective_timeout = timeout if timeout is not None else self._default_timeout
+        tool_id = getattr(tool, "tool_id", "")
         start = time.monotonic()
+
+        # Build context for tools that accept it.
+        context: dict[str, Any] = {
+            "session_id": session_id,
+            "agent_name": agent_name,
+        }
 
         # Emit tool.requested event.
         await self._emit(TOOL_REQUESTED, {
             "tool_name": tool_name,
+            "tool_id": tool_id,
             "params": params,
             "session_id": session_id,
+            "agent_name": agent_name,
         })
 
         # Permission check.
@@ -120,11 +191,16 @@ class ToolExecutor:
                     decision="deny",
                     error=decision.reason,
                     duration_ms=duration,
+                    agent_name=agent_name,
+                    session_id=session_id,
+                    tool_id=tool_id,
                 )
                 await self._emit(TOOL_DENIED, {
                     "tool_name": tool_name,
+                    "tool_id": tool_id,
                     "reason": decision.reason,
                     "session_id": session_id,
+                    "agent_name": agent_name,
                 })
                 return result
 
@@ -135,48 +211,181 @@ class ToolExecutor:
                     decision="confirm",
                     output=decision.reason,
                     duration_ms=int((time.monotonic() - start) * 1000),
+                    agent_name=agent_name,
+                    session_id=session_id,
+                    tool_id=tool_id,
                 )
 
-        # Execute the tool.
+        # Execute the tool with timeout.
+        task: asyncio.Task[dict[str, Any]] | None = None
         try:
-            result_dict = await tool.execute(params)
+            # Determine call signature — BaseTool subclasses accept context.
+            import inspect
+            sig = inspect.signature(tool.execute)
+            if "context" in sig.parameters:
+                coro = tool.execute(params, context=context)
+            else:
+                coro = tool.execute(params)
+
+            task = asyncio.create_task(coro)
+            self._active_tasks[tool_name] = task
+
+            result_dict = await asyncio.wait_for(
+                task, timeout=effective_timeout
+            )
             duration = int((time.monotonic() - start) * 1000)
 
             exec_result = ToolExecutionResult(
                 tool_name=tool_name,
                 decision="allow",
                 success=result_dict.get("success", True),
-                output=result_dict.get("output", ""),
+                output=str(result_dict.get("output", "")),
                 error=result_dict.get("error"),
                 duration_ms=duration,
+                agent_name=agent_name,
+                session_id=session_id,
+                tool_id=getattr(result_dict, "tool_id", "") or tool_id,
             )
 
             await self._emit(TOOL_EXECUTED, {
                 "tool_name": tool_name,
+                "tool_id": tool_id,
                 "success": exec_result.success,
                 "duration_ms": duration,
                 "session_id": session_id,
+                "agent_name": agent_name,
             })
 
             return exec_result
 
-        except Exception as exc:  # noqa: BLE001
+        except asyncio.TimeoutError:
             duration = int((time.monotonic() - start) * 1000)
+            error_msg = (
+                f"Tool '{tool_name}' timed out after "
+                f"{effective_timeout:.1f}s"
+            )
+
+            # Cancel the task if still pending.
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
             await self._emit(TOOL_FAILED, {
                 "tool_name": tool_name,
-                "error": str(exc),
+                "tool_id": tool_id,
+                "error": error_msg,
+                "error_type": "timeout",
                 "duration_ms": duration,
                 "session_id": session_id,
+                "agent_name": agent_name,
             })
 
+            logger.warning(error_msg)
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                decision="timeout",
+                success=False,
+                error=error_msg,
+                duration_ms=duration,
+                agent_name=agent_name,
+                session_id=session_id,
+                tool_id=tool_id,
+            )
+
+        except asyncio.CancelledError:
+            duration = int((time.monotonic() - start) * 1000)
+            error_msg = f"Tool '{tool_name}' was cancelled"
+
+            await self._emit(TOOL_FAILED, {
+                "tool_name": tool_name,
+                "tool_id": tool_id,
+                "error": error_msg,
+                "error_type": "cancelled",
+                "duration_ms": duration,
+                "session_id": session_id,
+                "agent_name": agent_name,
+            })
+
+            logger.info(error_msg)
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                decision="cancelled",
+                success=False,
+                error=error_msg,
+                duration_ms=duration,
+                agent_name=agent_name,
+                session_id=session_id,
+                tool_id=tool_id,
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            duration = int((time.monotonic() - start) * 1000)
+            error_str = str(exc)
+
+            await self._emit(TOOL_FAILED, {
+                "tool_name": tool_name,
+                "tool_id": tool_id,
+                "error": error_str,
+                "error_type": type(exc).__name__,
+                "duration_ms": duration,
+                "session_id": session_id,
+                "agent_name": agent_name,
+            })
+
+            logger.exception(
+                "Tool '%s' failed: %s", tool_name, error_str
+            )
             return ToolExecutionResult(
                 tool_name=tool_name,
                 decision="allow",
                 success=False,
-                error=str(exc),
+                error=error_str,
                 duration_ms=duration,
+                agent_name=agent_name,
+                session_id=session_id,
+                tool_id=tool_id,
             )
+
+        finally:
+            self._active_tasks.pop(tool_name, None)
+
+    async def cancel(self, tool_name: str) -> bool:
+        """Cancel a running tool execution by name.
+
+        Args:
+            tool_name: Name of the tool to cancel.
+
+        Returns:
+            True if a task was found and cancelled, False otherwise.
+        """
+        task = self._active_tasks.get(tool_name)
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("Cancelled execution of tool '%s'", tool_name)
+            return True
+        return False
+
+    async def cancel_all(self) -> int:
+        """Cancel all running tool executions.
+
+        Returns:
+            The number of tasks cancelled.
+        """
+        cancelled = 0
+        for name, task in list(self._active_tasks.items()):
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+                logger.info("Cancelled execution of tool '%s'", name)
+        return cancelled
+
+    @property
+    def active_count(self) -> int:
+        """Number of currently executing tools."""
+        return len(self._active_tasks)
 
     async def _emit(self, event_type: str, payload: Any) -> None:
         """Emit an event if a bus is available."""
