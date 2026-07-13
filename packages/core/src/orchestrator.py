@@ -35,10 +35,6 @@ from src.ws_manager import WebSocketManager
 if TYPE_CHECKING:
     from src.memory.manager import MemoryManager
 
-    # Lazy import to avoid hard dependency on agents package.
-    # BaseAgent lifecycle is used when available.
-    from src.base import BaseAgent as BaseAgentClass
-
 logger = logging.getLogger(__name__)
 
 # Default timeout for agent execution (seconds).

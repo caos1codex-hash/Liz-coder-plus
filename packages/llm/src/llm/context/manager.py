@@ -14,7 +14,6 @@ Sprint 1.9 — Phase 4.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -29,15 +28,6 @@ logger = logging.getLogger(__name__)
 # ======================================================================
 # Token Estimation
 # ======================================================================
-
-# Average characters per token for various languages/models.
-# These are rough estimates used when no real tokenizer is available.
-_CHARS_PER_TOKEN: dict[str, float] = {
-    "en": 4.0,      # English
-    "es": 4.5,      # Spanish
-    "code": 3.5,    # Source code
-    "default": 4.0,
-}
 
 
 def estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:

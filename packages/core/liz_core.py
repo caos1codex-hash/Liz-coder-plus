@@ -43,37 +43,6 @@ def _load_module(name: str, file_path: Path) -> ModuleType:
     return module
 
 
-def _load_core() -> ModuleType:
-    """Load all core submodules and return a virtual `core` module."""
-    # Ensure shared is reachable too (core imports shared in some modules).
-    # We load shared modules under private names like `_liz_shared_ws_models`.
-    # For Sprint 1 Prompt 2 the core modules we re-export do NOT depend on
-    # shared, so we can skip loading shared here for now.
-
-    # Load protocols first (no internal deps).
-    _load_module("_liz_core_protocols", _CORE_SRC / "protocols.py")
-
-    # Load modules in dependency order. Each one may `from src.xxx import`,
-    # which won't work because we're loading them under private names.
-    # So we ALSO register them under `src.xxx` temporarily.
-    # To avoid clobbering the backend's `src` package, we only register
-    # the SPECIFIC submodules we load, not the `src` package itself.
-    # However, `from src.protocols import Agent` requires `src` to be a
-    # package. The simplest workaround: temporarily make `src` point to
-    # a synthetic namespace that includes our core submodules.
-
-    # Build a synthetic `src` package that contains only the core
-    # submodules we need, WITHOUT replacing the real `src` if it exists.
-    # We use a unique alias `_liz_core_src` and rewrite the imports.
-
-    # Strategy: load each file as a standalone module, then patch its
-    # globals so `from src.xxx import yyy` works by injecting a custom
-    # import hook.
-    pass
-
-
-# Simpler strategy: prepend core/src and shared/src to sys.path, but
-# save and restore sys.modules['src'] so we don't clobber the backend.
 def _load_with_path_manipulation() -> dict[str, type]:
     """Load core public classes via temporary sys.path manipulation."""
     saved_src = sys.modules.pop("src", None)
