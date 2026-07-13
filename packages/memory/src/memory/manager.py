@@ -17,10 +17,15 @@ Sprint 1 - Prompt 3.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.memory.database import DatabaseManager
 from src.memory.repositories.conversation_repository import ConversationRepository
+
+if TYPE_CHECKING:
+    from src.memory.repositories.execution_repository import ExecutionRepository
+    from src.memory.repositories.task_repository import TaskRepository
+    from src.memory.repositories.workflow_repository import WorkflowRepository
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,9 @@ class MemoryManager:
         self._repo: ConversationRepository | None = None
         self._cache: dict[str, list[dict[str, Any]]] = {}
         self._initialized = False
+        self._task_repo: Any | None = None
+        self._workflow_repo: Any | None = None
+        self._execution_repo: Any | None = None
 
         logger.info("MemoryManager created (max_history=%d)", max_history)
 
@@ -93,6 +101,57 @@ class MemoryManager:
             self._max_history,
         )
 
+    @property
+    def db(self) -> DatabaseManager | None:
+        """The underlying DatabaseManager (or None)."""
+        return self._db
+
+    @property
+    def task_repository(self) -> Any | None:
+        """TaskRepository, available after ``initialize_task_persistence()``."""
+        return self._task_repo
+
+    @property
+    def workflow_repository(self) -> Any | None:
+        """WorkflowRepository, available after ``initialize_task_persistence()``."""
+        return self._workflow_repo
+
+    @property
+    def execution_repository(self) -> Any | None:
+        """ExecutionRepository, available after ``initialize_task_persistence()``."""
+        return self._execution_repo
+
+    async def initialize_task_persistence(self) -> None:
+        """Run the sprint 1.8 tasks/workflows migration and create repos.
+
+        Must be called after ``initialize()``.  Instantiates the
+        TaskRepository, WorkflowRepository and ExecutionRepository and
+        stores them as instance attributes (accessible via the
+        ``task_repository``, ``workflow_repository`` and
+        ``execution_repository`` properties).
+
+        Safe to call multiple times; subsequent calls are no-ops.
+        """
+        if self._db is None:
+            raise RuntimeError(
+                "MemoryManager not initialized — call initialize() first"
+            )
+        if self._task_repo is not None:
+            logger.debug("Task persistence already initialized")
+            return
+
+        await self._db.run_migration("sprint_1_8_tasks_workflows.sql")
+
+        from src.memory.repositories.task_repository import TaskRepository
+        from src.memory.repositories.workflow_repository import WorkflowRepository
+        from src.memory.repositories.execution_repository import ExecutionRepository
+
+        self._task_repo = TaskRepository(self._db)
+        self._workflow_repo = WorkflowRepository(self._db)
+        self._execution_repo = ExecutionRepository(self._db)
+
+        logger.info("Task/workflow persistence initialized")
+
     async def close(self) -> None:
         """Release all resources.
 
@@ -103,6 +162,10 @@ class MemoryManager:
             return
 
         self._cache.clear()
+
+        self._task_repo = None
+        self._workflow_repo = None
+        self._execution_repo = None
 
         if self._db is not None:
             await self._db.close()

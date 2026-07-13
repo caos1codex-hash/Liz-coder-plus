@@ -140,17 +140,20 @@ class DatabaseManager:
         conn = await self.connection()
         await conn.executescript(sql_script)
 
-    async def _run_migration(self, migration_name: str) -> None:
-        """Load and execute a migration SQL file from the migrations directory.
+    async def run_migration(self, migration_name: str) -> None:
+        """Load and execute a migration SQL file.
+
+        Public method so external code can trigger
+        additional migrations after the initial one.
 
         Args:
-            migration_name: Filename of the migration (e.g. 'initial.sql').
+            migration_name: Filename of the migration.
         """
         migrations_dir = Path(__file__).parent / "migrations"
         migration_file = migrations_dir / migration_name
 
         if not migration_file.exists():
-            logger.warning("Migration file not found: %s", migration_file)
+            logger.warning("Migration file not found: %s", migration_name)
             return
 
         try:
@@ -167,3 +170,7 @@ class DatabaseManager:
                 f"Migration {migration_name} failed: {exc}"
             ) from exc
         logger.info("Migration applied: %s", migration_name)
+
+    async def _run_migration(self, migration_name: str) -> None:
+        """Internal migration runner used during initialize()."""
+        await self.run_migration(migration_name)

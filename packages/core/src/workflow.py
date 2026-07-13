@@ -36,10 +36,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from src.memory.repositories.workflow_repository import WorkflowRepository
 
 from src.events import (
     WORKFLOW_CANCELLED,
@@ -117,7 +121,9 @@ class Workflow:
         name: str,
         nodes: list[WorkflowNode],
         description: str = "",
+        id: str | None = None,
     ) -> None:
+        self.id: str = id or str(uuid.uuid4())
         self.name = name
         self.description = description
         self._nodes: dict[str, WorkflowNode] = {n.task_id: n for n in nodes}
@@ -307,6 +313,7 @@ class Workflow:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "name": self.name,
             "description": self.description,
             "state": self._state.value,
@@ -315,7 +322,22 @@ class Workflow:
             "started_at": self._started_at.isoformat() if self._started_at else None,
             "completed_at": self._completed_at.isoformat() if self._completed_at else None,
             "error": self._error,
+            "errors": [self._error] if self._error else [],
+            "result": None,
+            "metadata": {},
             "nodes": [n.task.to_dict() for n in self._nodes.values()],
+            "dag_definition": {
+                "nodes": [
+                    {
+                        "task_id": n.task_id,
+                        "depends_on": list(n.depends_on),
+                        "retries": n.retries,
+                        "critical": n.critical,
+                        "task": n.task.to_dict(),
+                    }
+                    for n in self._nodes.values()
+                ],
+            },
         }
 
 
@@ -522,16 +544,23 @@ class WorkflowManager:
         *,
         event_bus: Any | None = None,
         max_concurrency: int = 8,
+        workflow_repository: Any | None = None,
     ) -> None:
         self._tasks = task_manager
         self._bus = event_bus
         self._max_concurrency = max(1, max_concurrency)
         self._workflows: dict[str, Workflow] = {}
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
+        self._workflow_repo: Any | None = workflow_repository
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    def attach_repository(self, repo: Any) -> None:
+        """Attach a WorkflowRepository for persistence (late binding)."""
+        self._workflow_repo = repo
+        logger.info("WorkflowRepository attached")
 
     @property
     def count(self) -> int:
@@ -561,6 +590,7 @@ class WorkflowManager:
             "workflow_name": workflow.name,
             "node_count": workflow.node_count,
         })
+        await self._persist_workflow(workflow)
         return workflow
 
     async def run(
@@ -585,6 +615,7 @@ class WorkflowManager:
             "workflow_name": workflow.name,
             "node_count": workflow.node_count,
         })
+        await self._persist_workflow(workflow)
 
         try:
             await self._run_dag(workflow, executor)
@@ -593,6 +624,7 @@ class WorkflowManager:
             await self._emit(WORKFLOW_CANCELLED, {
                 "workflow_name": workflow.name,
             })
+            await self._persist_workflow(workflow)
             raise
         except WorkflowCancelled as exc:
             workflow.mark_cancelled(str(exc))
@@ -619,6 +651,7 @@ class WorkflowManager:
                 "node_count": workflow.node_count,
             })
 
+        await self._persist_workflow(workflow)
         return workflow
 
     async def cancel(self, workflow_name: str, reason: str = "") -> bool:
@@ -786,6 +819,35 @@ class WorkflowManager:
     # Internals
     # ------------------------------------------------------------------
 
+    async def load_from_persistence(self) -> int:
+        """Load active workflows from the database into the in-memory dict.
+
+        Returns the number of workflows loaded. No-op if no repository
+        is attached.
+        """
+        if self._workflow_repo is None:
+            return 0
+        try:
+            rows = await self._workflow_repo.get_active_workflows()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load workflows from persistence")
+            return 0
+        loaded = 0
+        for row in rows:
+            try:
+                wf = self._dict_to_workflow(row)
+                self._workflows[wf.name] = wf
+                loaded += 1
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to restore workflow from persistence: %s",
+                    row.get("id"),
+                    exc_info=True,
+                )
+        if loaded:
+            logger.info("Loaded %d active workflows from persistence", loaded)
+        return loaded
+
     async def _emit(self, event_type: str, payload: Any) -> None:
         if self._bus is None:
             return
@@ -793,6 +855,91 @@ class WorkflowManager:
             await self._bus.publish(event_type, payload)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to emit event '%s'", event_type)
+
+    async def _persist_workflow(self, workflow: Workflow) -> None:
+        """Persist a workflow to the database if a repo is attached.
+
+        Errors are logged but never raised (graceful degradation).
+        """
+        if self._workflow_repo is None:
+            return
+        try:
+            await self._workflow_repo.save_workflow(workflow.to_dict())  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to persist workflow '%s' (%s)",
+                workflow.name, workflow.id,
+            )
+
+    @staticmethod
+    def _dict_to_workflow(data: dict[str, Any]) -> Workflow:
+        """Reconstruct a Workflow from a persistence dict."""
+        from src.task import Task, TaskState, TaskPriority
+
+        def _parse_dt(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value
+            return datetime.fromisoformat(value)
+
+        dag = data.get("dag_definition", {})
+        node_defs = dag.get("nodes", []) if isinstance(dag, dict) else []
+
+        nodes: list[WorkflowNode] = []
+        for nd in node_defs:
+            task_data = nd.get("task", {})
+            task = Task(
+                name=task_data.get("name", "unknown"),
+                description=task_data.get("description", ""),
+                priority=TaskPriority(task_data.get("priority", "normal")),
+                id=task_data.get("id", str(uuid.uuid4())),
+                state=TaskState(task_data.get("state", "pending")),
+                progress=int(task_data.get("progress", 0)),
+                agent_name=task_data.get("agent_name", ""),
+                tools_used=list(task_data.get("tools_used", [])),
+                created_at=_parse_dt(task_data.get("created_at")) or datetime.now(timezone.utc),
+                started_at=_parse_dt(task_data.get("started_at")),
+                completed_at=_parse_dt(task_data.get("completed_at")),
+                result=task_data.get("result"),
+                errors=list(task_data.get("errors", [])),
+                metadata=dict(task_data.get("metadata", {})),
+                parent_id=task_data.get("parent_id"),
+                workflow_id=task_data.get("workflow_id") or data.get("id"),
+            )
+            node = WorkflowNode(
+                task=task,
+                depends_on=list(nd.get("depends_on", [])),
+                retries=int(nd.get("retries", 0)),
+                critical=bool(nd.get("critical", True)),
+            )
+            nodes.append(node)
+
+        # Reconstruct with existing timestamps.
+        wf = Workflow(
+            name=data.get("name", "unknown"),
+            description=data.get("description", ""),
+            nodes=nodes,
+            id=data.get("id"),
+        )
+        # Restore timestamps and state.
+        created = _parse_dt(data.get("created_at"))
+        if created is not None:
+            wf._created_at = created
+        started = _parse_dt(data.get("started_at"))
+        if started is not None:
+            wf._started_at = started
+        completed = _parse_dt(data.get("completed_at"))
+        if completed is not None:
+            wf._completed_at = completed
+        try:
+            wf._state = WorkflowState(data.get("state", "created"))
+        except ValueError:
+            wf._state = WorkflowState.CREATED
+        errors = data.get("errors", [])
+        if isinstance(errors, list) and errors:
+            wf._error = errors[0] if errors else None
+        return wf
 
 
 # ----------------------------------------------------------------------

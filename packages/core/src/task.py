@@ -32,7 +32,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Callable, Awaitable
+
+if TYPE_CHECKING:
+    from src.memory.repositories.task_repository import TaskRepository
 
 from src.events import (
     TASK_CANCELLED,
@@ -257,14 +260,25 @@ class TaskManager:
     # Maximum number of terminal tasks kept in history.
     MAX_HISTORY = 200
 
-    def __init__(self, event_bus: Any | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: Any | None = None,
+        *,
+        task_repository: Any | None = None,
+    ) -> None:
         self._tasks: dict[str, Task] = {}
         self._history: list[Task] = []
         self._bus = event_bus
+        self._task_repo: Any | None = task_repository
 
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    def attach_repository(self, repo: Any) -> None:
+        """Attach a TaskRepository for persistence (late binding)."""
+        self._task_repo = repo
+        logger.info("TaskRepository attached")
 
     @property
     def event_bus(self) -> Any | None:
@@ -320,6 +334,7 @@ class TaskManager:
             "Task created: '%s' (%s) agent=%s",
             task.name, task.id, task.agent_name,
         )
+        await self._persist_task(task)
         return task
 
     async def start(self, task_id: str) -> Task:
@@ -336,6 +351,7 @@ class TaskManager:
             "name": task.name,
             "agent_name": task.agent_name,
         })
+        await self._persist_task(task)
         return task
 
     async def complete(
@@ -358,6 +374,7 @@ class TaskManager:
             "tools_used": list(task.tools_used),
         })
         self._archive(task)
+        await self._persist_task(task)
         return task
 
     async def fail(self, task_id: str, error: str) -> Task:
@@ -375,6 +392,7 @@ class TaskManager:
             "error": error,
         })
         self._archive(task)
+        await self._persist_task(task)
         return task
 
     async def cancel(self, task_id: str, reason: str = "") -> Task:
@@ -398,6 +416,7 @@ class TaskManager:
             "reason": reason,
         })
         self._archive(task)
+        await self._persist_task(task)
         return task
 
     async def pause(self, task_id: str) -> Task:
@@ -416,6 +435,7 @@ class TaskManager:
             "task_id": task.id,
             "name": task.name,
         })
+        await self._persist_task(task)
         return task
 
     async def resume(self, task_id: str) -> Task:
@@ -434,12 +454,14 @@ class TaskManager:
             "task_id": task.id,
             "name": task.name,
         })
+        await self._persist_task(task)
         return task
 
     async def update_progress(self, task_id: str, progress: int) -> Task:
         """Update the progress hint (0..100). Does not change state."""
         task = self._require(task_id)
         task.progress = max(0, min(100, int(progress)))
+        await self._persist_task(task)
         return task
 
     async def retry(self, task_id: str) -> Task:
@@ -459,6 +481,7 @@ class TaskManager:
             "name": task.name,
             "reason": "retry",
         })
+        await self._persist_task(task)
         return task
 
     # ------------------------------------------------------------------
@@ -535,6 +558,34 @@ class TaskManager:
             overflow = len(self._history) - self.MAX_HISTORY
             del self._history[:overflow]
 
+    async def load_from_persistence(self) -> int:
+        """Load active tasks from the database into the in-memory dict.
+
+        Returns the number of tasks loaded. No-op if no repository is
+        attached.
+        """
+        if self._task_repo is None:
+            return 0
+        try:
+            rows = await self._task_repo.get_active_tasks()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load tasks from persistence")
+            return 0
+        loaded = 0
+        for row in rows:
+            try:
+                task = self._dict_to_task(row)
+                self._tasks[task.id] = task
+                loaded += 1
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Failed to restore task from persistence: %s", row.get("id"),
+                    exc_info=True,
+                )
+        if loaded:
+            logger.info("Loaded %d active tasks from persistence", loaded)
+        return loaded
+
     async def _emit(self, event_type: str, payload: Any) -> None:
         """Emit an event if a bus is attached."""
         if self._bus is None:
@@ -543,6 +594,49 @@ class TaskManager:
             await self._bus.publish(event_type, payload)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to emit event '%s'", event_type)
+
+    async def _persist_task(self, task: Task) -> None:
+        """Persist a task to the database if a repo is attached.
+
+        Errors are logged but never raised (graceful degradation).
+        """
+        if self._task_repo is None:
+            return
+        try:
+            await self._task_repo.save_task(task.to_dict())  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to persist task '%s' (%s)", task.name, task.id,
+            )
+
+    @staticmethod
+    def _dict_to_task(data: dict[str, Any]) -> Task:
+        """Reconstruct a Task from a persistence dict."""
+        def _parse_dt(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return value
+            return datetime.fromisoformat(value)
+
+        return Task(
+            name=data["name"],
+            description=data.get("description", ""),
+            priority=TaskPriority(data.get("priority", "normal")),
+            id=data["id"],
+            state=TaskState(data.get("state", "pending")),
+            progress=int(data.get("progress", 0)),
+            agent_name=data.get("agent_name", ""),
+            tools_used=list(data.get("tools_used", [])),
+            created_at=_parse_dt(data.get("created_at")) or datetime.now(timezone.utc),
+            started_at=_parse_dt(data.get("started_at")),
+            completed_at=_parse_dt(data.get("completed_at")),
+            result=data.get("result"),
+            errors=list(data.get("errors", [])),
+            metadata=dict(data.get("metadata", {})),
+            parent_id=data.get("parent_id"),
+            workflow_id=data.get("workflow_id"),
+        )
 
 
 __all__ = [
