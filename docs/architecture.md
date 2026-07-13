@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.1.2` — Sprint 1.5 (Agent Stabilization).
+> Versión: `v0.2.0` — Sprint 1.6 (Tools System).
 
 ## 1. Visión general
 
@@ -122,14 +122,32 @@ entre el backend y el core.
 
 ### 2.6 Tools (`packages/tools`)
 
-- **BaseTool:** clase abstracta con metadata.
+- **BaseTool:** clase abstracta con lifecycle completo, validación y
+  métricas (Sprint 1.6).
+  - **Identidad:** `name`, `tool_id` (UUID), `description`, `version`.
   - **Categorías:** `SHELL`, `FILE`, `WEB`, `APP`, `SYSTEM`, `CUSTOM`
     (enum `ToolCategory`).
-  - **Metadata:** `name`, `description`, `version`, `category`.
-- **ToolRegistry:** registro con validación del Protocol `Tool`.
+  - **Nivel de permiso:** `LOW`, `MEDIUM`, `HIGH` (enum `PermissionLevel`).
+  - **Estados:** `AVAILABLE → EXECUTING → COMPLETED/ERROR`, más `DISABLED`.
+  - **Validación:** `validate_input(params)` y `validate_output(result)`
+    con soporte para `parameters_schema` declarativo.
+  - **Métricas:** `executions`, `failures`, `last_error`, `total_time_ms`.
+  - **Contrato:** subclases implementan `_execute(params, context) -> dict`;
+    el método `execute()` de la base gestiona lifecycle, validación y métricas.
+  - **Contexto de ejecución:** `execute(params, context={session_id, agent_name})`.
+- **ToolRegistry:** registro mejorado con validación duck-typing.
+  - Soporta fuentes: `INTERNAL`, `EXTERNAL`, `PLUGIN` (enum `ToolSource`).
+  - Políticas de duplicados: `OVERWRITE`, `RAISE`, `SKIP` (enum `DuplicatePolicy`).
+  - Activación/desactivación individual de herramientas.
+  - Búsqueda por categoría, nivel de permiso y fuente.
+  - Método `summary()` con estadísticas del registro.
+- **Herramientas base (Sprint 1.6):**
+  - `FileTool` — leer, escribir, listar archivos y directorios. MEDIUM.
+  - `SystemTool` — información del sistema y estado. LOW.
+  - `TerminalTool` — ejecutar comandos shell. HIGH.
 - **Seguridad:** toda ejecución pasa por `ToolExecutor` que consulta
   `PermissionService` antes de ejecutar. Decisiones: `allow`,
-  `confirm`, `deny`.
+  `confirm`, `deny`, `timeout`, `cancelled`.
 
 ### 2.7 Shared (`packages/shared`)
 
@@ -179,11 +197,14 @@ entre el backend y el core.
 | Configuración por entorno       | Diferencia desarrollo / producción.                        |
 | SQLite vía aiosqlite            | Acceso asíncrono nativo, sin overhead de SQLAlchemy.      |
 | Cache RAM + persistencia       | Lecturas rápidas desde RAM, persistencia en SQLite.       |
+| Tool lifecycle (BaseTool)       | Estados explícitos, validación, métricas por instancia.   |
+| Permission levels (LOW/MED/HIGH) | Política granular basada en riesgo de la herramienta.   |
+| Timeout y cancelación en tools   | `asyncio.wait_for` + `Task.cancel()` en ToolExecutor.       |
 
 ## 5. Evolución prevista
 
-- **Sprint 2:** primer agente conversacional + herramientas operativas.
-- **Sprint 3:** herramientas operativas + permisos en producción.
+- **Sprint 2:** primer agente conversacional con LLM.
+- **Sprint 3:** permisos en producción + plugins de herramientas.
 - **Sprint 4:** UI desktop con chat.
 - **Sprint 5:** integración real con modelos IA.
 - **Sprint 6+:** voz, imágenes, control avanzado del PC.
@@ -287,7 +308,7 @@ y NO deben ser eliminados sin considerar el roadmap:
 | `packages/memory/src/models.py` | Modelos SQLAlchemy, reservados para migraciones complejas | Sprint 3 |
 | `packages/memory/src/sqlite.py` | Implementación SQLAlchemy, reservada como alternativa | Sprint 3 |
 | `packages/agents/` | Paquete completo, sin uso | Sprint 2 |
-| `packages/tools/` | Paquete completo, sin uso | Sprint 3 |
+| `packages/tools/` | Paquete funcional con 3 herramientas base | Sprint 1.6 (activo) |
 | `apps/backend/src/core/orchestrator.py` | Stub, reemplazado por `packages/core/` | Eliminar en Sprint 2 |
 | `apps/backend/src/events/bus.py` | EventBus original, reemplazado por `packages/core/src/event_bus.py` | Eliminar en Sprint 2 |
 
@@ -364,19 +385,32 @@ WebSocket → Cliente
 ```
 Agente solicita herramienta
     │
-    ▼  ToolExecutor.execute(tool, params)
+    ▼  ToolExecutor.execute(tool, params, session_id, agent_name)
     │
-    ├─→ emit: tool.requested
-    ├─→ PermissionService.evaluate(tool_name)
+    ├─→ emit: tool.requested (con agent_name, session_id, tool_id)
+    ├─→ PermissionService.evaluate_tool(tool_name, level, agent_name)
     │
     ├─ decision == "deny" → emit: tool.denied → return
     ├─ decision == "confirm" → return (cliente debe aprobar)
-    ├─ decision == "allow" → tool.execute(params)
-    │       ├─ éxito → emit: tool.executed
-    │       └─ error → emit: tool.failed
+    ├─ decision == "allow" → asyncio.wait_for(tool.execute(...), timeout)
+    │       ├─ éxito → validate_output → emit: tool.executed → return
+    │       ├─ timeout → cancel task → emit: tool.failed → return
+    │       ├─ cancelled → emit: tool.failed → return
+    │       └─ error → emit: tool.failed → return
     │
-    ▼  ToolExecutionResult {tool_name, decision, success, output, error, duration_ms}
+    ▼  ToolExecutionResult {
+        tool_name, decision, success, output, error,
+        duration_ms, agent_name, session_id, tool_id
+    }
 ```
+
+Niveles de permiso (Sprint 1.6):
+
+| Nivel | Descripción | Ejemplos |
+|---|---|---|
+| LOW | Operaciones de lectura, información básica | SystemTool, FileTool.read_file |
+| MEDIUM | Modificaciones controladas | FileTool.write_file |
+| HIGH | Ejecución de comandos, acciones críticas | TerminalTool |
 
 ### 7.5 Cómo Crear un Nuevo Agente
 
@@ -420,3 +454,140 @@ Agente solicita herramienta
 | No inicializado | `is_initialized=False` | Agentes registrados pero no listos |
 | Activo | `is_initialized=True, is_shutdown=False` | Listo para procesar mensajes |
 | Apagado | `is_shutdown=True` | Agentes cerrados, no procesa mensajes |
+
+## 8. Sistema de Herramientas — Detalle Técnico (Sprint 1.6)
+
+### 8.1 Estructura del Paquete Tools
+
+```
+packages/tools/src/
+├── __init__.py          → API pública (BaseTool, ToolRegistry, FileTool, ...)
+├── base.py             → BaseTool, ToolCategory, ToolState, PermissionLevel, ToolError
+├── registry.py         → ToolRegistry, ToolSource, DuplicatePolicy, ToolRegistration
+└── tools/
+    ├── __init__.py      → Init del subpaquete
+    ├── file_tool.py     → FileTool (read_file, write_file, list_directory)
+    ├── system_tool.py   → SystemTool (info, status)
+    └── terminal_tool.py → TerminalTool (run)
+```
+
+### 8.2 Ciclo de Vida de una Herramienta
+
+```
+nueva BaseTool()
+    │
+    ▼  state = AVAILABLE
+herramienta lista para ejecutar
+    │
+    ▼  tool.execute(params, context={...})
+    │   ├─ validate_input(params)  → ToolError si falla → state = ERROR
+    │   ├─ state = EXECUTING
+    │   ├─ _execute(params, context) → resultado
+    │   ├─ validate_output(result) → ToolError si falla → state = ERROR
+    │   └─ state = COMPLETED (o ERROR si excepción)
+    │
+    ▼  (puede ejecutarse de nuevo desde AVAILABLE/COMPLETED/ERROR)
+    │
+    ▼  tool.disable()
+state = DISABLED  →  tool.enable()  →  state = AVAILABLE
+```
+
+### 8.3 Flujo de Ejecución Segura
+
+```
+Agente
+  │
+  ▼  solicita herramienta al Orchestrator
+Orchestrator.execute_tool(tool_name, params, session_id)
+  │
+  ▼  ToolExecutor.execute(tool, params, session_id, agent_name, timeout)
+  │
+  ├─ emit: tool.requested
+  ├─ PermissionService.evaluate_tool(tool_name, level=..., agent_name=...)
+  │
+  ├─ decision == "deny" → emit: tool.denied → return ToolExecutionResult
+  ├─ decision == "confirm" → return ToolExecutionResult (esperar aprobación)
+  ├─ decision == "allow" → asyncio.wait_for(tool.execute(params, context), timeout)
+  │       │
+  │       ├─ éxito → emit: tool.executed → return ToolExecutionResult
+  │       ├─ TimeoutError → cancel task → emit: tool.failed → return
+   │       ├─ CancelledError → emit: tool.failed → return
+   │       └─ Exception → emit: tool.failed → return
+  │
+  ▼  ToolExecutionResult → Orchestrator → WebSocket → Desktop
+```
+
+### 8.4 Niveles de Permiso y Modos
+
+El `PermissionService` tiene dos modos (Confirmation/Automatic) y tres
+niveles de herramienta (LOW/MEDIUM/HIGH).
+
+**Modo Confirmation:** toda acción requiere aprobación del usuario,
+independientemente del nivel.
+
+**Modo Automatic:**
+- Herramientas con nivel <= `auto_allow_up_to` se ejecutan sin preguntar.
+- Herramientas en `allowed_commands` se ejecutan sin preguntar.
+- Herramientas en `denied_commands` siempre se bloquean (prioridad máxima).
+- Todo lo demás requiere confirmación.
+
+El umbral `auto_allow_up_to` se configura con
+`permission_service.set_auto_allow_up_to("medium")`.
+
+**Auditoría:** cada evaluación se registra en `permission_service.audit_log`
+con timestamp, herramienta, agente, decisión y razón.
+
+### 8.5 Herramientas Base Disponibles
+
+| Herramienta | Categoría | Nivel | Acciones |
+|---|---|---|---|
+| `FileTool` | FILE | MEDIUM | `read_file`, `write_file`, `list_directory` |
+| `SystemTool` | SYSTEM | LOW | `info`, `status` |
+| `TerminalTool` | SHELL | HIGH | `run` |
+
+### 8.6 Cómo Crear una Nueva Herramienta
+
+1. Crear un archivo en `packages/tools/src/tools/`.
+2. Heredar de `BaseTool`:
+
+   ```python
+   from src.base import BaseTool, PermissionLevel, ToolCategory
+
+   class MiHerramienta(BaseTool):
+       name = "mi_herramienta"
+       description = "Hace algo útil"
+       version = "1.0.0"
+       category = ToolCategory.CUSTOM
+       permission_level = PermissionLevel.LOW
+
+       parameters_schema = {
+           "required": ["dato"],
+           "properties": {
+               "dato": {"type": "str", "description": "El dato"},
+           },
+       }
+
+       async def _execute(self, params, context):
+           # Acceder a contexto:
+           session_id = context.get("session_id", "")
+           agent_name = context.get("agent_name", "")
+           return {"success": True, "output": f"Procesado: {params['dato']}"}
+   ```
+
+3. Registrar en el sistema:
+
+   ```python
+   from src import ToolRegistry, ToolSource, MiHerramienta
+
+   registry = ToolRegistry()
+   registry.register(MiHerramienta(), source=ToolSource.INTERNAL)
+   ```
+
+4. Registrar también en el Orchestrator si se usa la herramienta desde agentes:
+
+   ```python
+   tool = MiHerramienta()
+   orch.register_tool(tool)
+   ```
+
+5. (Opcional) Agregar reglas de permisos en `config/development.json`.

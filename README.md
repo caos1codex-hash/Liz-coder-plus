@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.1.2`
-**Estado:** Sprint 1 — Memoria Persistente (Prompt 3)
+**Versión:** `v0.2.0`
+**Estado:** Sprint 1.6 — Tools System
 
 ---
 
@@ -129,16 +129,29 @@ dotnet run
 - Integración completa: Orchestrator → SessionManager → MemoryManager → SQLite.
 - Cache RAM para lecturas rápidas con persistencia en disco.
 - Restauración de sesiones después de reinicio del proceso.
-- 78 tests unitarios y de integración pasando.
 
-### Sprint 2 — Agentes y Herramientas
+### Sprint 1.5 — Agent Stabilization ✅
+- BaseAgent con lifecycle completo (CREATED → READY → RUNNING → COMPLETED/FAILED → SHUTDOWN).
+- AgentRegistry con validación del Protocol Agent.
+- ToolExecutor con gating de permisos y emisión de eventos.
+- Integración agentes-orchestrator con timeout y métricas.
+
+### Sprint 1.6 — Tools System ✅
+- BaseTool con lifecycle, validación de entrada/salida, y métricas.
+- Niveles de permiso (LOW/MEDIUM/HIGH) en herramientas.
+- ToolRegistry con fuentes, activación/desactivación y filtrado.
+- ToolExecutor con timeout, cancelación, contexto y tracking de agente.
+- PermissionService con evaluate_tool() level-aware y audit log.
+- 3 herramientas base: FileTool, SystemTool, TerminalTool.
+- 225 tests unitarios pasando.
+
+### Sprint 2 — Agente Conversacional
 - Primer agente conversacional con IA real.
-- Herramientas operativas + permisos en producción.
 
-### Sprint 3 — Herramientas y Permisos
-- Ejecución de comandos con confirmación.
-- Sistema de permisos operativo.
-- Registro de auditoría.
+### Sprint 3 — Permisos en Producción y Plugins
+- Sistema de permisos operativo en producción.
+- Plugins de herramientas externas.
+- Registro de auditoría persistente.
 
 ### Sprint 4 — Interfaz Desktop
 - UI WinUI 3 funcional.
