@@ -190,6 +190,10 @@ class TokenUsage:
     completion_tokens: int = 0
     total_tokens: int = 0
 
+    def __post_init__(self) -> None:
+        if self.total_tokens == 0 and (self.prompt_tokens or self.completion_tokens):
+            object.__setattr__(self, "total_tokens", self.prompt_tokens + self.completion_tokens)
+
     def to_dict(self) -> dict[str, int]:
         return {
             "prompt_tokens": self.prompt_tokens,

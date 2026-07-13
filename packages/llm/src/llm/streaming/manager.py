@@ -213,7 +213,7 @@ class StreamingManager:
 
         try:
             # Set up the provider stream with retry.
-            stream_iter = await self._get_stream_iterator(
+            stream_iter = self._get_stream_iterator(
                 provider, messages, model, temperature, max_tokens, **kwargs
             )
 
@@ -344,7 +344,7 @@ class StreamingManager:
         Useful for internal consumers that don't need the WebSocket
         envelope format.
         """
-        stream_iter = await self._get_stream_iterator(
+        stream_iter = self._get_stream_iterator(
             provider, messages, model, temperature, max_tokens, **kwargs
         )
         async for chunk in stream_iter:

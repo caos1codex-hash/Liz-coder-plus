@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Ensure the LLM package is importable.
-_LLM_ROOT = Path(__file__).resolve().parents[2] / "packages" / "llm" / "src"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_LLM_ROOT = _PROJECT_ROOT / "packages" / "llm"
 if str(_LLM_ROOT) not in sys.path:
     sys.path.insert(0, str(_LLM_ROOT))
 
@@ -33,6 +34,7 @@ from src.llm.models import (  # noqa: E402
     TokenUsage,
 )
 from src.llm.manager import ModelManager  # noqa: E402
+
 
 
 # ======================================================================
