@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.1.2` — Sprint 1.4 (Stabilization).
+> Versión: `v0.1.2` — Sprint 1.5 (Agent Stabilization).
 
 ## 1. Visión general
 
@@ -57,17 +57,29 @@ backend; el desktop es una capa fina de presentación.
 ### 2.3 Core (`packages/core`)
 
 - **Orquestador:** punto central que recibe cada mensaje, decide el
-  agente, coordina memoria y herramientas, y emite eventos.
-- **WebSocketManager:** registro de conexiones activas. Soporta
-  broadcast global, broadcast por sesión y envío dirigido. Expone
-  callbacks `on_connect` / `on_disconnect` para auditoría.
+  agente, coordina memoria y herramientas, y emite eventos. Soporta
+  lifecycle (`initialize()` / `shutdown()`), timeout configurable
+  por agente, y ejecución de herramientas con permisos.
+- **EventBus:** bus pub/sub interno (`event_bus.py`) para desacoplar
+  módulos. Soporta subscribe, unsubscribe, publish con retorno de
+  contador, y fault isolation entre handlers.
+- **Eventos:** el catálogo está en `packages/core/src/events.py`.
+  Incluye ciclos de vida de usuario, agentes, herramientas, permisos
+  y sistema.
+- **AgentRouter:** decide qué agente atiende cada mensaje. Las reglas
+  son predicados async evaluados en orden; la primera coincidencia
+  gana. Valida el Protocol `Agent` al registrar. Incluye `EchoAgent`
+  como fallback que usa el contexto (historial, modo, idioma).
+- **ToolExecutor:** ejecuta herramientas con gating de permisos.
+  Flujo: permission check → deny/confirm/allow → ejecución → evento.
+- **Protocols:** contratos estructurales en `protocols.py` para
+  `Agent`, `Memory` y `Tool` (duck-typing con `runtime_checkable`).
 - **SessionManager:** almacena en memoria el historial temporal de
   cada conversación (hasta 200 turnos), el idioma preferido del usuario
-  y el último modo de permiso solicitado.
-- **AgentRouter:** decide qué agente atiende cada mensaje. Sprint 1
-  incluye un `EchoAgent` por defecto que devuelve un saludo en español.
-- **EventBus:** bus pub/sub interno para desacoplar módulos.
-- **Eventos:** el catálogo está en `packages/core/src/events.py`.
+  y el último modo de permiso solicitado. Integrado con memoria
+  persistente vía `MemoryManager`.
+- **WebSocketManager:** registro de conexiones activas. Soporta
+  broadcast global, broadcast por sesión y envío dirigido.
 
 El paquete `core` se expone al backend a través de un shim
 `packages/core/liz_core.py` que evita colisiones de namespace `src`
@@ -95,15 +107,29 @@ entre el backend y el core.
 
 ### 2.5 Agents (`packages/agents`)
 
-- **Agentes especializados:** conversacional, código, sistema, etc.
-- **Contrato:** heredan de `BaseAgent` (`packages/agents/src/base.py`).
-- **Registro:** el `AgentRegistry` mantiene el catálogo disponible.
+- **BaseAgent:** clase abstracta con ciclo de vida completo.
+  - **Estados:** `CREATED → READY → RUNNING → COMPLETED/FAILED → SHUTDOWN`.
+  - **Métodos:** `initialize()`, `shutdown()`, `safe_handle()` (con
+    aislamiento de errores y métricas), `handle()` (abstracto).
+  - **Metadata:** `name`, `description`, `version`, `capabilities`,
+    `agent_id`, `state`, `tasks_completed`, `tasks_failed`.
+  - Los agentes que fallan pueden reintentar (estado `FAILED` permite
+    nuevas ejecuciones).
+- **AgentRegistry:** registro con validación del Protocol `Agent`.
+- **Contrato dual:** los agentes pueden heredar de `BaseAgent` (con
+  lifecycle) o simplemente satisfacer el Protocol `Agent` (duck-typing).
+  El Orchestrator acepta ambos.
 
 ### 2.6 Tools (`packages/tools`)
 
-- **Herramientas externas:** shell, archivos, web, automatización.
-- **Contrato:** heredan de `BaseTool` (`packages/tools/src/base.py`).
-- **Seguridad:** toda ejecución pasa antes por el `PermissionService`.
+- **BaseTool:** clase abstracta con metadata.
+  - **Categorías:** `SHELL`, `FILE`, `WEB`, `APP`, `SYSTEM`, `CUSTOM`
+    (enum `ToolCategory`).
+  - **Metadata:** `name`, `description`, `version`, `category`.
+- **ToolRegistry:** registro con validación del Protocol `Tool`.
+- **Seguridad:** toda ejecución pasa por `ToolExecutor` que consulta
+  `PermissionService` antes de ejecutar. Decisiones: `allow`,
+  `confirm`, `deny`.
 
 ### 2.7 Shared (`packages/shared`)
 
@@ -145,7 +171,10 @@ entre el backend y el core.
 | WebSocket bidireccional         | Conversación en tiempo real, sin polling.                  |
 | MVVM en desktop                 | Separa UI de lógica y facilita pruebas.                    |
 | Protocolos/ABC en Python        | Contratos explícitos entre módulos.                        |
-| EventBus interno                | Desacopla módulos y habilita auditoría.                    |
+| EventBus interno                | Desacopla módulos y habilita auditoría y monitoreo.       |
+| Agent lifecycle (BaseAgent)      | Estados explícitos, métricas, recuperación.              |
+| Timeout en agentes              | `asyncio.wait_for` con configurable por Orchestrator.     |
+| Protocol validation             | `isinstance` en registro para prevenir errores runtime.  |
 | Permisos en backend             | El desktop nunca ejecuta acciones peligrosas.              |
 | Configuración por entorno       | Diferencia desarrollo / producción.                        |
 | SQLite vía aiosqlite            | Acceso asíncrono nativo, sin overhead de SQLAlchemy.      |
@@ -260,7 +289,10 @@ y NO deben ser eliminados sin considerar el roadmap:
 | `packages/agents/` | Paquete completo, sin uso | Sprint 2 |
 | `packages/tools/` | Paquete completo, sin uso | Sprint 3 |
 | `apps/backend/src/core/orchestrator.py` | Stub, reemplazado por `packages/core/` | Eliminar en Sprint 2 |
-| `apps/backend/src/events/bus.py` | EventBus, sin instanciar | Sprint 3 |
+| `apps/backend/src/events/bus.py` | EventBus original, reemplazado por `packages/core/src/event_bus.py` | Eliminar en Sprint 2 |
+
+Nota: `packages/agents/` y `packages/tools/` ya NO son código muerto —
+sus clases base y registros son funcionales desde Sprint 1.5.
 
 ### 6.6 Cómo Extender el Sistema de Memoria
 
@@ -273,3 +305,118 @@ Para agregar un nuevo backend de almacenamiento (ej. PostgreSQL):
    proveedor según `config.memory.provider`.
 4. El `SessionManager` no necesita cambios porque interactúa
    exclusivamente a través de `MemoryManager`.
+
+## 7. Sistema de Agentes — Detalle Técnico (Sprint 1.5)
+
+### 7.1 Tipos de Agentes
+
+| Tipo | Descripción | Sprint |
+|---|---|---|
+| EchoAgent | Fallback que reconoce mensajes en español, usa contexto | Sprint 1 (activo) |
+| Conversacional | Diálogo general con LLM | Sprint 2 |
+| Código | Asistencia de programación | Sprint 2 |
+| Sistema | Control del PC y herramientas | Sprint 3 |
+| Investigación | Búsqueda y síntesis | Futuro |
+
+### 7.2 Ciclo de Vida de un Agente
+
+```
+nuevo BaseAgent()
+    │
+    ▼  state = CREATED
+agente sin uso; no puede procesar mensajes
+    │
+    ▼  agent.initialize()
+state = READY
+    │
+    ▼  agent.safe_handle(msg, ctx)
+state = RUNNING → COMPLETED (o FAILED)
+    │
+    ▼  (puede recibir más mensajes desde READY/COMPLETED/FAILED)
+    │
+    ▼  agent.shutdown()
+state = SHUTDOWN
+```
+
+El Orchestrator gestiona el ciclo de vida de todos los agentes
+registrados a través de `orchestrator.initialize()` y
+`orchestrator.shutdown()`.
+
+### 7.3 Flujo de Ejecución con Eventos
+
+```
+Usuario → WebSocket → Orchestrator
+    │
+    ├─→ emit: user.message.received
+    ├─→ SessionManager.append_turn(role="user")
+    ├─→ AgentRouter.route(message, context)
+    ├─→ emit: agent.invoked
+    ├─→ agent.handle(message, context)  [con timeout]
+    ├─→ emit: agent.completed (o agent.failed)
+    ├─→ SessionManager.append_turn(role="assistant")
+    │
+    ▼  Envelope {type, content, status, agent_name, duration_ms}
+WebSocket → Cliente
+```
+
+### 7.4 Sistema de Permisos para Herramientas
+
+```
+Agente solicita herramienta
+    │
+    ▼  ToolExecutor.execute(tool, params)
+    │
+    ├─→ emit: tool.requested
+    ├─→ PermissionService.evaluate(tool_name)
+    │
+    ├─ decision == "deny" → emit: tool.denied → return
+    ├─ decision == "confirm" → return (cliente debe aprobar)
+    ├─ decision == "allow" → tool.execute(params)
+    │       ├─ éxito → emit: tool.executed
+    │       └─ error → emit: tool.failed
+    │
+    ▼  ToolExecutionResult {tool_name, decision, success, output, error, duration_ms}
+```
+
+### 7.5 Cómo Crear un Nuevo Agente
+
+1. Crear un archivo en `packages/agents/src/` (o importar desde otro
+   paquete).
+2. Heredar de `BaseAgent` o crear una clase que satisfaga el Protocol:
+
+   ```python
+   from src.base import BaseAgent
+
+   class MiAgente(BaseAgent):
+       name = "mi_agente"
+       description = "Hace algo útil"
+       capabilities = ["ejemplo"]
+
+       async def handle(self, message: str, context: dict) -> str:
+           return f"Procesado: {message}"
+   ```
+
+3. Registrar en el Orchestrator:
+
+   ```python
+   orch = Orchestrator()
+   orch.register_agent(MiAgente())
+   await orch.initialize()  # transiciona a READY
+   ```
+
+4. Opcionalmente agregar una regla de routing:
+
+   ```python
+   async def es_mi_agente(msg, ctx) -> bool:
+       return msg.startswith("@")
+
+   orch.router.add_rule("mi_agente", es_mi_agente)
+   ```
+
+### 7.6 Estados del Orchestrator
+
+| Estado | Propiedad | Descripción |
+|---|---|---|
+| No inicializado | `is_initialized=False` | Agentes registrados pero no listos |
+| Activo | `is_initialized=True, is_shutdown=False` | Listo para procesar mensajes |
+| Apagado | `is_shutdown=True` | Agentes cerrados, no procesa mensajes |
