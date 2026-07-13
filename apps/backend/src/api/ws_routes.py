@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.api.ws_adapter import FastAPIWebSocketAdapter
+from src.core.config import load_config
 
 # Import core symbols via the monorepo shim. The shim adds
 # packages/core/src to sys.path temporarily and re-exports the public
@@ -28,6 +29,12 @@ if str(_CORE_PACKAGE) not in sys.path:
     sys.path.insert(0, str(_CORE_PACKAGE))
 
 from liz_core import Orchestrator, WebSocketManager  # noqa: E402
+
+# Shared ws models for request validation.
+_SHARED_ROOT = _REPO_ROOT / "packages" / "shared" / "src"
+if str(_SHARED_ROOT) not in sys.path:
+    sys.path.append(str(_SHARED_ROOT))
+from ws_models import WebSocketChatRequest  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -95,47 +102,28 @@ async def _process_message(
     orchestrator: Orchestrator,
     ws_manager: WebSocketManager,
 ) -> None:
-    """Validate and process a single inbound WebSocket message."""
-    # Validate payload shape.
-    message = (raw or {}).get("message")
-    session_id = (raw or {}).get("session_id")
-    mode = (raw or {}).get("mode", "confirmation")
+    """Validate and process a single inbound WebSocket message.
 
-    if not isinstance(message, str) or not message.strip():
+    Uses the shared WebSocketChatRequest model for validation.
+    """
+    # Validate payload using the shared Pydantic model.
+    try:
+        request = WebSocketChatRequest(**(raw or {}))
+    except Exception as exc:
         await ws_manager.send_to(
             connection_id,
             {
                 "type": "error",
                 "content": "",
                 "status": "failed",
-                "error": "Field 'message' is required and must be a non-empty string.",
+                "error": f"Invalid request: {exc}",
             },
         )
         return
 
-    if not isinstance(session_id, str) or not session_id.strip():
-        await ws_manager.send_to(
-            connection_id,
-            {
-                "type": "error",
-                "content": "",
-                "status": "failed",
-                "error": "Field 'session_id' is required and must be a non-empty string.",
-            },
-        )
-        return
-
-    if mode not in ("confirmation", "automatic"):
-        await ws_manager.send_to(
-            connection_id,
-            {
-                "type": "error",
-                "content": "",
-                "status": "failed",
-                "error": "Field 'mode' must be 'confirmation' or 'automatic'.",
-            },
-        )
-        return
+    message = request.message
+    session_id = request.session_id
+    mode = request.mode
 
     # Bind the connection to this session if not yet bound.
     adapter = ws_manager.get(connection_id)
