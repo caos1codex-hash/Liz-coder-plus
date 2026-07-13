@@ -322,15 +322,15 @@ class BaseTool(ABC):
                 f"Tool '{self.name}' is already executing"
             )
 
-        # Validate input.
-        self.validate_input(params)
-
-        # Transition to EXECUTING.
-        self._state = ToolState.EXECUTING
-        ctx = context or {}
         start = time.monotonic()
 
         try:
+            # Validate input.
+            self.validate_input(params)
+
+            # Transition to EXECUTING.
+            self._state = ToolState.EXECUTING
+            ctx = context or {}
             result = await self._execute(params, ctx)
             duration_ms = int((time.monotonic() - start) * 1000)
 

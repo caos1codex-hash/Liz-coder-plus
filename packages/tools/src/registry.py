@@ -22,9 +22,22 @@ from enum import Enum
 from typing import Any, Iterable
 
 from src.base import BaseTool, PermissionLevel, ToolCategory
-from src.protocols import Tool
 
 logger = logging.getLogger(__name__)
+
+
+def _satisfies_tool_protocol(obj: Any) -> bool:
+    """Check if obj satisfies the Tool protocol (duck-typing).
+
+    Avoids importing from packages/core at module level, which breaks
+    tests that only have packages/tools on sys.path.
+    """
+    return (
+        hasattr(obj, "name")
+        and isinstance(getattr(obj, "name", None), str)
+        and hasattr(obj, "execute")
+        and callable(getattr(obj, "execute", None))
+    )
 
 
 class ToolSource(str, Enum):
@@ -109,7 +122,7 @@ class ToolRegistry:
             TypeError: If the tool does not satisfy the Tool protocol.
             ValueError: If duplicate_policy is RAISE and name exists.
         """
-        if not isinstance(tool, Tool):
+        if not _satisfies_tool_protocol(tool):
             raise TypeError(
                 f"Tool '{getattr(tool, 'name', '?')}' does not satisfy "
                 f"the Tool protocol (needs 'name: str' and "
