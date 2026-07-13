@@ -442,16 +442,18 @@ class ExecutionPipeline:
         ``Orchestrator.handle_message`` shape, so callers can treat
         both paths uniformly.
         """
+        pipeline_start = time.monotonic()
         try:
             req = await self.run(message, session_id, mode=mode)
         except PipelineError as exc:
+            duration_ms = int((time.monotonic() - pipeline_start) * 1000)
             await self._orch._emit(AGENT_FAILED, {
                 "agent_name": exc.stage,
                 "session_id": session_id,
                 "error_type": exc.error_type,
                 "error": exc.message,
                 "stage": exc.stage,
-                "duration_ms": int((time.monotonic() - 0) * 1000),
+                "duration_ms": duration_ms,
             })
 
             # Persist the failure as a system turn (best-effort).

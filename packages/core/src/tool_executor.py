@@ -23,6 +23,7 @@ tracking, structured error handling, and action logging.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 import uuid
@@ -229,9 +230,14 @@ class ToolExecutor:
         task: asyncio.Task[dict[str, Any]] | None = None
         try:
             # Determine call signature — BaseTool subclasses accept context.
-            import inspect
-            sig = inspect.signature(tool.execute)
-            if "context" in sig.parameters:
+            # Cache the result to avoid repeated introspection.
+            accepts_context = getattr(tool, '_accepts_context', None)
+            if accepts_context is None:
+                sig = inspect.signature(tool.execute)
+                accepts_context = "context" in sig.parameters
+                tool._accepts_context = accepts_context  # type: ignore[attr-defined]
+
+            if accepts_context:
                 coro = tool.execute(params, context=context)
             else:
                 coro = tool.execute(params)

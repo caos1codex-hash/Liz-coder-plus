@@ -14,6 +14,7 @@ Sprint 1.9 — Phase 2.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import os
 import time
@@ -27,6 +28,15 @@ from src.llm.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Provider class map — avoids reconstruction on every _create_provider call.
+_PROVIDER_CLASS_MAP: dict[ModelProvider, tuple[str, str]] = {
+    ModelProvider.OLLAMA: ("src.llm.providers.ollama", "OllamaProvider"),
+    ModelProvider.OPENAI: ("src.llm.providers.openai", "OpenAIProvider"),
+    ModelProvider.ANTHROPIC: ("src.llm.providers.anthropic", "AnthropicProvider"),
+    ModelProvider.GOOGLE: ("src.llm.providers.google", "GoogleProvider"),
+    ModelProvider.OPENROUTER: ("src.llm.providers.openrouter", "OpenRouterProvider"),
+}
 
 
 class ModelManager:
@@ -421,15 +431,7 @@ class ModelManager:
 
         Uses lazy imports to avoid requiring all provider SDKs.
         """
-        provider_map = {
-            ModelProvider.OLLAMA: ("src.llm.providers.ollama", "OllamaProvider"),
-            ModelProvider.OPENAI: ("src.llm.providers.openai", "OpenAIProvider"),
-            ModelProvider.ANTHROPIC: ("src.llm.providers.anthropic", "AnthropicProvider"),
-            ModelProvider.GOOGLE: ("src.llm.providers.google", "GoogleProvider"),
-            ModelProvider.OPENROUTER: ("src.llm.providers.openrouter", "OpenRouterProvider"),
-        }
-
-        module_path, class_name = provider_map.get(
+        module_path, class_name = _PROVIDER_CLASS_MAP.get(
             info.provider, ("", "")
         )
         if not module_path:
@@ -438,7 +440,6 @@ class ModelManager:
             )
 
         try:
-            import importlib
             mod = importlib.import_module(module_path)
             cls = getattr(mod, class_name)
         except (ImportError, AttributeError) as exc:

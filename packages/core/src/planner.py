@@ -38,6 +38,25 @@ from src.events import PLANNER_DECISION, PLANNER_PLAN_CREATED
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled regex patterns for rule matching (avoids re-compilation per call).
+_FILE_PATTERNS = [re.compile(p) for p in [
+    r"\b(lee|leer|le\xe9)\w*\s+(el\s+)?archivo",
+    r"\b(escrib\w*|guarda\w*)\s+.+\s+(en\s+)?archivo",
+    r"\b(list\w*|lista\w*)\s+(los\s+)?archivos",
+]]
+_TERMINAL_PATTERNS = [re.compile(p) for p in [
+    r"\b(ejecut\w*|corr\w*|run)\w*\s+(el\s+)?comando",
+    r"\b(terminal|shell|bash|cmd|powershell)\b",
+]]
+_RESEARCH_PATTERNS = [re.compile(p) for p in [
+    r"\b(busca\w*|investiga\w*|analiza\w*)\b.*\b(y|luego|despu\u00e9s)\b",
+    r"\b(investiga\w*).+\b(y\s+resume\w*|y\s+explica\w*)\b",
+]]
+_SYSTEM_PATTERNS = [re.compile(p) for p in [
+    r"\b(informaci\u00f3n|info|estado)\s+del\s+sistema",
+    r"\b(qu\u00e9|cuanta|cu\u00e1nta)\s+(memoria|cpu|disco)\b",
+]]
+
 
 # ----------------------------------------------------------------------
 # Plan data model
@@ -204,25 +223,20 @@ class Planner:
         """
         msg_lower = message.lower().strip()
 
-        # Rule 1: file operations.
-        if _matches_any(msg_lower, [r"\b(lee|leer|leé)\w*\s+(el\s+)?archivo",
-                                     r"\b(escrib\w*|guarda\w*)\s+.+\s+(en\s+)?archivo",
-                                     r"\b(list\w*|lista\w*)\s+(los\s+)?archivos"]):
+        # Rule 1: file operations (pre-compiled patterns).
+        if any(p.search(msg_lower) for p in _FILE_PATTERNS):
             return self._plan_file_operation(message)
 
-        # Rule 2: terminal / shell commands.
-        if _matches_any(msg_lower, [r"\b(ejecut\w*|corr\w*|run)\w*\s+(el\s+)?comando",
-                                     r"\b(terminal|shell|bash|cmd|powershell)\b"]):
+        # Rule 2: terminal / shell commands (pre-compiled patterns).
+        if any(p.search(msg_lower) for p in _TERMINAL_PATTERNS):
             return self._plan_terminal_command(message)
 
-        # Rule 3: research / multi-step queries.
-        if _matches_any(msg_lower, [r"\b(busca\w*|investiga\w*|analiza\w*)\b.*\b(y|luego|después)\b",
-                                     r"\b(investiga\w*).+\b(y\s+resume\w*|y\s+explica\w*)\b"]):
+        # Rule 3: research / multi-step queries (pre-compiled patterns).
+        if any(p.search(msg_lower) for p in _RESEARCH_PATTERNS):
             return self._plan_research(message)
 
-        # Rule 4: system info.
-        if _matches_any(msg_lower, [r"\b(información|info|estado)\s+del\s+sistema",
-                                     r"\b(qué|cuanta|cuánta)\s+(memoria|cpu|disco)\b"]):
+        # Rule 4: system info (pre-compiled patterns).
+        if any(p.search(msg_lower) for p in _SYSTEM_PATTERNS):
             return self._plan_system_info(message)
 
         # Fallback: single sub-task, default agent.

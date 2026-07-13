@@ -17,6 +17,7 @@ Sprint 1.9 — Phase 6.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 import uuid
@@ -208,8 +209,13 @@ class StreamingManager:
         stream_session = await self._create_session(session_id, model, provider)
 
         effective_timeout = timeout if timeout is not None else self._config.default_timeout
-        full_content = ""
+        content_buf = io.StringIO()
         start = time.monotonic()
+
+        # Pre-determine callback types to avoid repeated introspection.
+        _is_coro_cb = asyncio.iscoroutinefunction(on_chunk) if on_chunk else False
+        _global_cb = self._config.chunk_callback
+        _is_coro_global = asyncio.iscoroutinefunction(_global_cb) if _global_cb else False
 
         try:
             # Set up the provider stream with retry.
@@ -258,15 +264,16 @@ class StreamingManager:
                     }
                     return
 
-                # Accumulate content.
-                full_content += chunk.content
+                # Accumulate content using StringIO (O(n) vs O(n²) for string concat).
+                content_buf.write(chunk.content)
                 stream_session.chunks_received += 1
-                stream_session.total_chars = len(full_content)
+                stream_session.total_chars += len(chunk.content)
 
                 # Build the envelope.
                 if chunk.is_final:
                     stream_session.state = StreamState.COMPLETED
                     stream_session.finished_at = time.monotonic()
+                    full_content = content_buf.getvalue()
                     yield {
                         "type": "message",
                         "content": full_content,
@@ -290,24 +297,23 @@ class StreamingManager:
                     }
                     yield envelope
 
-                    # Invoke callback if provided.
+                    # Invoke callback if provided (pre-checked coroutine type).
                     if on_chunk:
                         try:
-                            if asyncio.iscoroutinefunction(on_chunk):
+                            if _is_coro_cb:
                                 await on_chunk(envelope)
                             else:
                                 on_chunk(envelope)
                         except Exception:  # noqa: BLE001
                             logger.exception("Chunk callback error")
 
-                    # Invoke global chunk callback.
-                    if self._config.chunk_callback:
+                    # Invoke global chunk callback (pre-checked coroutine type).
+                    if _global_cb:
                         try:
-                            cb = self._config.chunk_callback
-                            if asyncio.iscoroutinefunction(cb):
-                                await cb(stream_session.id, envelope)
+                            if _is_coro_global:
+                                await _global_cb(stream_session.id, envelope)
                             else:
-                                cb(stream_session.id, envelope)
+                                _global_cb(stream_session.id, envelope)
                         except Exception:  # noqa: BLE001
                             logger.exception("Global chunk callback error")
 

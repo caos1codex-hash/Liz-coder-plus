@@ -28,6 +28,7 @@ TaskManager for execution.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -195,8 +196,8 @@ class SchedulerRepository:
                 d["retry_count"], d["max_retries"], d["last_run_at"],
                 d["next_run_at"], d["created_at"], d["completed_at"],
                 d["error"],
-                __import__("json").dumps(d["metadata"], ensure_ascii=False, default=str),
-                __import__("json").dumps(d["task_data"], ensure_ascii=False, default=str),
+                json.dumps(d["metadata"], ensure_ascii=False, default=str),
+                json.dumps(d["task_data"], ensure_ascii=False, default=str),
             ),
         )
         await conn.commit()
@@ -261,7 +262,6 @@ class SchedulerRepository:
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict[str, Any]:
-        import json
         data = dict(row)
         for fn in ("metadata", "task_data"):
             try:
@@ -579,25 +579,18 @@ class Scheduler:
 
     async def _check_and_dispatch(self) -> None:
         """Check for due jobs and dispatch them."""
-        now = datetime.now(timezone.utc)
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         due_jobs = [
             j for j in self._jobs.values()
             if not j.is_terminal()
             and j.state in (JobState.PENDING, JobState.SCHEDULED, JobState.PAUSED)
             and j.next_run_at is not None
+            and j.next_run_at <= now_iso
         ]
 
         for job in due_jobs:
-            try:
-                next_time = datetime.fromisoformat(job.next_run_at)
-                if next_time <= now:
-                    await self._dispatch_job(job)
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Invalid next_run_at for job '%s': %s",
-                    job.name, job.next_run_at,
-                )
+            await self._dispatch_job(job)
 
     async def _dispatch_job(self, job: SchedulerJob) -> None:
         """Dispatch a due job to the TaskManager."""
