@@ -1,0 +1,82 @@
+"""Multi-agent orchestrator package for Liz Coder Plus (Sprint 2.1).
+
+Public API:
+
+- `BaseAgent` — clase abstracta para agentes.
+- `AgentOrchestrator` — orquestador central.
+- `Message`, `MessageBus` — mensajería.
+- `PriorityQueue`, `Task` — cola de tareas.
+- `AgentMemory` — memoria por agente.
+- `AgentLogger`, `LogEntry` — logs.
+- `MultiAgentConfig`, `RetryPolicy` — configuración.
+- `HealthReport` — resultado de health().
+- Agentes concretos: `PlannerAgent`, `CoderAgent`, `ReviewerAgent`,
+  `ResearchAgent`, `TerminalAgent`, `GitAgent`, `MemoryAgent`.
+"""
+
+from __future__ import annotations
+
+__version__ = "0.1.0"
+
+from .base import BaseAgent, HealthReport
+from .config import MultiAgentConfig, RetryPolicy
+from .enums import (
+    AgentStatus,
+    HealthState,
+    MessageType,
+    Permission,
+    Priority,
+    TaskStatus,
+)
+from .logs import AgentLogger, LogEntry
+from .memory import AgentMemory, MemoryEntry
+from .messages import Message, MessageBus
+from .orchestrator import AgentOrchestrator
+from .queue import PriorityQueue, Task
+
+# Agentes concretos
+from .agents.coder import CoderAgent
+from .agents.git import GitAgent
+from .agents.memory import MemoryAgent
+from .agents.planner import PlannerAgent
+from .agents.research import ResearchAgent
+from .agents.reviewer import ReviewerAgent
+from .agents.terminal import TerminalAgent
+
+__all__ = [
+    # Base
+    "BaseAgent",
+    "HealthReport",
+    # Config
+    "MultiAgentConfig",
+    "RetryPolicy",
+    # Enums
+    "AgentStatus",
+    "HealthState",
+    "MessageType",
+    "Permission",
+    "Priority",
+    "TaskStatus",
+    # Logs
+    "AgentLogger",
+    "LogEntry",
+    # Memory
+    "AgentMemory",
+    "MemoryEntry",
+    # Messages
+    "Message",
+    "MessageBus",
+    # Orchestrator
+    "AgentOrchestrator",
+    # Queue
+    "PriorityQueue",
+    "Task",
+    # Concrete agents
+    "CoderAgent",
+    "GitAgent",
+    "MemoryAgent",
+    "PlannerAgent",
+    "ResearchAgent",
+    "ReviewerAgent",
+    "TerminalAgent",
+]
