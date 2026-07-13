@@ -43,6 +43,21 @@ from .agents.research import ResearchAgent
 from .agents.reviewer import ReviewerAgent
 from .agents.terminal import TerminalAgent
 
+# Sprint 2.2/2 — Registry + Capabilities
+from .registry import (
+    ACTION_TO_CAPABILITY,
+    AGENT_NAME_TO_CAPABILITIES,
+    AgentRecord,
+    AgentRegistry,
+    BackwardCompatibilityAdapter,
+    Capability,
+    CapabilityRegistry,
+    CapabilityResolver,
+    ResolutionResult,
+    ResolverWeights,
+    register_standard_capabilities,
+)
+
 # Sprint 2.2 — Workflow engine
 from .workflow.context import CodeSnippet, ContextManager, FileSnapshot, SharedMessage
 from .workflow.dag import DAG, ValidationResult
@@ -59,6 +74,7 @@ from .workflow.load_balancer import AgentMetrics, LoadBalancer, LoadBalancerWeig
 from .workflow.models import Step, Workflow
 from .workflow.orchestrator import WorkflowOrchestrator
 from .workflow.observability import Histogram, MetricsCollector
+from .workflow.registry_scheduler import RegistryAwareScheduler
 from .workflow.scheduler import ScheduleDecision, Scheduler, SchedulerConfig
 
 __all__ = [
@@ -97,6 +113,18 @@ __all__ = [
     "ResearchAgent",
     "ReviewerAgent",
     "TerminalAgent",
+    # Sprint 2.2/2 — Registry + Capabilities
+    "ACTION_TO_CAPABILITY",
+    "AGENT_NAME_TO_CAPABILITIES",
+    "AgentRecord",
+    "AgentRegistry",
+    "BackwardCompatibilityAdapter",
+    "Capability",
+    "CapabilityRegistry",
+    "CapabilityResolver",
+    "ResolutionResult",
+    "ResolverWeights",
+    "register_standard_capabilities",
     # Sprint 2.2 — Workflow
     "AgentMetrics",
     "CodeSnippet",
@@ -111,6 +139,7 @@ __all__ = [
     "LoadBalancer",
     "LoadBalancerWeights",
     "MetricsCollector",
+    "RegistryAwareScheduler",
     "ScheduleDecision",
     "Scheduler",
     "SchedulerConfig",
