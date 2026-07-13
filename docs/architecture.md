@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.1.1` — Sprint 1 - Prompt 1 (Foundation).
+> Versión: `v0.1.1` — Sprint 1 - Prompt 3 (Persistent Memory).
 
 ## 1. Visión general
 
@@ -75,12 +75,23 @@ entre el backend y el core.
 
 ### 2.4 Memory (`packages/memory`)
 
-- **Backend inicial:** SQLite (vía SQLAlchemy 2.0 + aiosqlite).
-- **Tipos:**
-  - Corto plazo: contexto de la conversación actual.
-  - Largo plazo: hechos, preferencias y resúmenes.
-- **Contrato:** cualquier backend debe implementar el Protocol
-  `MemoryBackend` de `packages/memory/src/base.py`.
+- **Backend funcional:** SQLite (vía aiosqlite, acceso asíncrono nativo).
+- **Componentes:**
+  - `MemoryManager`: API pública del sistema de memoria. Gestiona la
+    inicialización, mantiene un cache RAM por sesión y delega al
+    repositorio para persistencia.
+  - `DatabaseManager`: gestiona la conexión SQLite, ejecuta migraciones
+    automáticas y expone métodos de bajo nivel.
+  - `ConversationRepository`: capa de acceso a datos con operaciones
+    CRUD asíncronas sobre la tabla `conversations`.
+  - `ConversationMessage`: modelo de datos (dataclass) para mensajes.
+- **Flujo de persistencia:** cuando el `SessionManager` tiene un
+  `MemoryManager` adjuntado, cada `append_turn()` persiste el mensaje
+  tanto en la cache RAM como en SQLite. Al reiniciar, `restore_session()`
+  recarga el historial desde la base de datos.
+- **Configuración:** `config/development.json` → sección `memory`.
+- **Contrato genérico (futuro):** el Protocol `MemoryBackend` de
+  `packages/memory/src/base.py` está disponible para backends alternativos.
 
 ### 2.5 Agents (`packages/agents`)
 
@@ -111,10 +122,11 @@ entre el backend y el core.
 3. El backend recibe el JSON, valida los campos y delega en el
    `WebSocketManager` para registrar/enrutar la conexión.
 4. El `Orchestrator.handle_message()` se ejecuta:
-   - Persiste el turno del usuario en el `SessionManager`.
+   - Persiste el turno del usuario en el `SessionManager` (RAM + SQLite
+     si hay un `MemoryManager` adjuntado).
    - Consulta el `AgentRouter` para seleccionar un agente.
    - Invoca al agente, que produce una respuesta de texto.
-   - Persiste el turno del asistente.
+   - Persiste el turno del asistente (RAM + SQLite).
 5. El orquestador devuelve la respuesta al endpoint WebSocket.
 6. El endpoint emite uno o varios `WebSocketChatResponse` (chunks
    mientras se genera el texto, luego un sobre final con
@@ -136,10 +148,12 @@ entre el backend y el core.
 | EventBus interno                | Desacopla módulos y habilita auditoría.                    |
 | Permisos en backend             | El desktop nunca ejecuta acciones peligrosas.              |
 | Configuración por entorno       | Diferencia desarrollo / producción.                        |
+| SQLite vía aiosqlite            | Acceso asíncrono nativo, sin overhead de SQLAlchemy.      |
+| Cache RAM + persistencia       | Lecturas rápidas desde RAM, persistencia en SQLite.       |
 
 ## 5. Evolución prevista
 
-- **Sprint 2:** memoria SQLite funcional + primer agente.
+- **Sprint 2:** primer agente conversacional + herramientas operativas.
 - **Sprint 3:** herramientas operativas + permisos en producción.
 - **Sprint 4:** UI desktop con chat.
 - **Sprint 5:** integración real con modelos IA.

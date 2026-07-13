@@ -3,7 +3,7 @@
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
 **Versión:** `v0.1.2`
-**Estado:** Sprint 1 — Capa de comunicación WebSocket (Prompt 2)
+**Estado:** Sprint 1 — Memoria Persistente (Prompt 3)
 
 ---
 
@@ -116,15 +116,24 @@ dotnet run
 - Configuración por entorno.
 - Documentación inicial.
 
-### Sprint 1 — Prompt 2 (próximo)
-- Esqueleto funcional del backend FastAPI.
-- Endpoints básicos de salud y estado.
-- WebSocket stub para comunicación.
+### Sprint 1 — Capa de comunicación WebSocket (Prompt 2) ✅
+- Backend FastAPI funcional con endpoints /health y /status.
+- WebSocket bidireccional con streaming de respuestas.
+- Orquestador conectado con SessionManager y AgentRouter.
+- Sistema de permisos inicial.
 
-### Sprint 2 — Memoria y Agentes
-- Implementación de SQLite con SQLAlchemy.
-- Memoria a corto y largo plazo.
-- Primer agente conversacional.
+### Sprint 1 — Memoria Persistente (Prompt 3) ✅
+- Sistema de memoria conversacional con SQLite (aiosqlite).
+- MemoryManager como API pública del sistema de memoria.
+- ConversationRepository para acceso a datos asíncrono.
+- Integración completa: Orchestrator → SessionManager → MemoryManager → SQLite.
+- Cache RAM para lecturas rápidas con persistencia en disco.
+- Restauración de sesiones después de reinicio del proceso.
+- 78 tests unitarios y de integración pasando.
+
+### Sprint 2 — Agentes y Herramientas
+- Primer agente conversacional con IA real.
+- Herramientas operativas + permisos en producción.
 
 ### Sprint 3 — Herramientas y Permisos
 - Ejecución de comandos con confirmación.
