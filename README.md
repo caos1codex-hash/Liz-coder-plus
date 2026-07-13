@@ -3,7 +3,7 @@
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
 **Versión:** `v0.2.0`
-**Estado:** Sprint 1.6 — Tools System
+**Estado:** Sprint 1.7 — Orchestrator Avanzado
 
 ---
 

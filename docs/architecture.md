@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.2.0` — Sprint 1.6 (Tools System).
+> Versión: `v0.2.0` — Sprint 1.7 (Orchestrator Avanzado).
 
 ## 1. Visión general
 
@@ -591,3 +591,438 @@ con timestamp, herramienta, agente, decisión y razón.
    ```
 
 5. (Opcional) Agregar reglas de permisos en `config/development.json`.
+
+## 9. Orchestrator Avanzado — Detalle Técnico (Sprint 1.7)
+
+Sprint 1.7 convierte al Orchestrator en el centro inteligente del
+sistema, capaz de planificar, coordinar y supervisar la ejecución
+de múltiples agentes, herramientas y tareas de forma segura,
+escalable y observable.
+
+### 9.1 Visión General
+
+```
+Usuario
+  │
+  ▼
+Orchestrator.handle_message()
+  │
+  ▼
+ExecutionPipeline (único punto de entrada)
+  │
+  ├─ 1. ValidateRequest       → valida mensaje y sesión
+  ├─ 2. PublishUserMessage     → emite user.message.received
+  ├─ 3. PersistUserTurn        → SessionManager.append_turn(role="user")
+  ├─ 4. BuildContext           → contexto desde sesión
+  ├─ 5. RetrieveMemory         → contexto desde memoria persistente
+  ├─ 6. PlanExecution          → Planner (opcional)
+  ├─ 7. SelectAgent            → AgentRouter.route()
+  ├─ 8. CheckPermissions       → (reservado)
+  ├─ 9. ExecuteAgent           → asyncio.wait_for(agent.handle, timeout)
+  ├─ 10. PublishAgentResult    → emite agent.completed
+  ├─ 11. UpdateMemory          → SessionManager.append_turn(role="assistant")
+  │
+  ▼  Envelope {type, content, status, agent_name, duration_ms, stage_timings}
+WebSocket → Cliente
+```
+
+El pipeline es **único** y **obligatorio**: ya no existen rutas
+duplicadas para procesar un mensaje. Toda la lógica está en
+`packages/core/src/pipeline.py` y se invoca desde
+`Orchestrator.handle_message()`.
+
+### 9.2 Componentes Nuevos
+
+| Módulo | Archivo | Responsabilidad |
+|---|---|---|
+| `ExecutionPipeline` | `pipeline.py` | Orquesta las etapas del flujo |
+| `Task` + `TaskManager` | `task.py` | Unidad de trabajo direccionable |
+| `Workflow` + `WorkflowManager` | `workflow.py` | Motor de DAGs |
+| `Planner` + `Plan` + `SubTask` | `planner.py` | Planificación heurística |
+| `MetricsCollector` | `observability.py` | Métricas y auditoría |
+| `StructuredLogger` | `observability.py` | Logs JSON con correlation_id |
+
+### 9.3 Execution Pipeline
+
+#### Etapas
+
+```python
+DEFAULT_STAGES = [
+    stage_validate_request,        # valida entrada
+    stage_publish_user_message,    # emite user.message.received
+    stage_persist_user_turn,       # persiste turno usuario
+    stage_build_context,           # construye contexto
+    stage_retrieve_memory,         # recupera memoria
+    stage_plan_execution,          # invoca Planner (opcional)
+    stage_select_agent,            # AgentRouter.route()
+    stage_check_permissions,       # gate de permisos (reservado)
+    stage_execute_agent,           # ejecuta con timeout
+    stage_publish_agent_result,    # emite agent.completed
+    stage_update_memory,           # persiste turno asistente
+]
+```
+
+#### Manejo de Errores
+
+Todas las etapas lanzan `PipelineError(stage, error_type, message)`.
+El `ExecutionPipeline.run_safe()` captura estos errores, emite
+`agent.failed` con el contexto de la etapa, persiste un turno de
+sistema y retorna un envelope de error consistente:
+
+```python
+{
+    "type": "error",
+    "content": "Lo siento, ocurrió un error al procesar tu mensaje.",
+    "status": "failed",
+    "session_id": "s1",
+    "error": "agent_timeout",          # error_type o agent_timeout
+    "stage": "stage_execute_agent",    # qué etapa falló
+    "duration_ms": 0,
+}
+```
+
+#### Timing por Etapa
+
+El pipeline registra el tiempo de cada etapa en
+`result["stage_timings"]`:
+
+```python
+{
+    "stage_validate_request": 0,
+    "stage_publish_user_message": 1,
+    "stage_persist_user_turn": 2,
+    "stage_build_context": 0,
+    "stage_retrieve_memory": 5,
+    "stage_plan_execution": 0,
+    "stage_select_agent": 1,
+    "stage_check_permissions": 0,
+    "stage_execute_agent": 42,
+    "stage_publish_agent_result": 1,
+    "stage_update_memory": 2,
+}
+```
+
+Esto permite identificar cuellos de botella por etapa.
+
+### 9.4 Task System
+
+#### Modelo de Tarea
+
+```python
+@dataclass
+class Task:
+    id: str               # UUID4
+    name: str
+    description: str
+    priority: TaskPriority  # LOW | NORMAL | HIGH | CRITICAL
+    state: TaskState        # PENDING | READY | RUNNING | WAITING | COMPLETED | FAILED | CANCELLED
+    progress: int           # 0..100
+    agent_name: str
+    tools_used: list[str]
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    result: Any
+    errors: list[str]
+    metadata: dict
+    parent_id: str | None   # para subtareas
+    workflow_id: str | None # para workflows
+```
+
+#### Máquina de Estados
+
+```
+PENDING → READY → RUNNING ─┬─→ COMPLETED
+              ↑             ├─→ FAILED
+              │             ├─→ CANCELLED
+              └─ WAITING ───┘
+                          (paused / blocked)
+
+FAILED → READY (retry)
+COMPLETED, CANCELLED: terminal
+```
+
+Las transiciones son validadas: no se puede pausar una tarea
+`COMPLETED`, ni reanudar una que no esté en `WAITING`.
+
+#### TaskManager
+
+| Método | Descripción |
+|---|---|
+| `create(name, ...)` | Crea una tarea en `PENDING` |
+| `start(task_id)` | Transiciona a `RUNNING` |
+| `complete(task_id, result)` | Marca `COMPLETED` |
+| `fail(task_id, error)` | Marca `FAILED` |
+| `cancel(task_id, reason)` | Marca `CANCELLED` |
+| `pause(task_id)` | Pasa a `WAITING` |
+| `resume(task_id)` | Pasa de `WAITING` a `READY` |
+| `retry(task_id)` | Pasa de `FAILED` a `READY` |
+| `update_progress(task_id, pct)` | Actualiza progreso (0..100) |
+| `next_ready()` | Devuelve la tarea `READY` de mayor prioridad |
+| `summary()` | Stats agregadas para observabilidad |
+
+Cada método emite su evento correspondiente (`task.created`,
+`task.started`, etc.).
+
+### 9.5 Workflow Engine
+
+#### DAG (Grafo Dirigido Acíclico)
+
+Un `Workflow` es un conjunto de nodos (`WorkflowNode`) donde cada
+nodo referencia una `Task` y declara sus dependencias. El motor
+valida el DAG al construirlo (Kahn's algorithm para detectar ciclos).
+
+```
+Sequential:           Parallel / Fan-out:
+  A → B → C             A
+                          ↘
+                           B   →  D
+                          ↗
+                          C
+```
+
+#### WorkflowBuilder
+
+API fluida para construir workflows:
+
+```python
+wf = await (
+    WorkflowBuilder("ingest")
+    .with_task_manager(tm, workflow_id="wf-1")
+    .add_task("fetch", agent_name="fetcher")
+    .add_task("parse", depends_on=["fetch"], agent_name="parser")
+    .add_task("store", depends_on=["parse"], agent_name="storer")
+    .build_async()
+)
+```
+
+#### WorkflowManager
+
+| Método | Descripción |
+|---|---|
+| `register(wf)` | Registra un workflow (emite `workflow.created`) |
+| `run(wf, executor)` | Ejecuta el DAG hasta terminar |
+| `cancel(name, reason)` | Solicita cancelación (no bloqueante) |
+
+El `executor` es una corrutina `(task) -> result` provista por el
+caller. Esto mantiene el motor agnóstico al backend de ejecución.
+
+#### Reintentos
+
+Cada `WorkflowNode` declara `retries=N`. Si la tarea falla, se
+reintenta hasta N veces antes de declarar el nodo como `FAILED`.
+
+#### Criticidad
+
+Un nodo `critical=True` (default) aborta el workflow si falla. Un
+nodo `critical=False` se marca como `CANCELLED` pero el workflow
+continúa con los nodos que no dependan de él.
+
+### 9.6 Planner
+
+#### Estrategias Heurísticas
+
+| Estrategia | Trigger | Subtareas |
+|---|---|---|
+| `single` | (default) | 1: `handle` |
+| `file_operation` | "lee/escribe/lista archivo" | 3: `read → process → respond` |
+| `terminal_command` | "ejecuta/corre comando", "terminal/bash" | 3: `validate → execute → respond` |
+| `research_then_summarize` | "investiga ... y resume" | 3: `gather → analyze → summarize` |
+| `system_info` | "información del sistema" | 2: `query → respond` |
+
+#### Plan
+
+```python
+@dataclass
+class Plan:
+    strategy: str           # etiqueta
+    rationale: str          # explicación
+    subtasks: list[SubTask] # nodos del plan
+```
+
+#### SubTask
+
+```python
+@dataclass
+class SubTask:
+    name: str
+    description: str
+    suggested_agent: str
+    suggested_tools: list[str]
+    depends_on: list[str]   # nombres de subtareas hermanas
+```
+
+#### Integración con Memoria, AgentRegistry y ToolRegistry
+
+El Planner acepta opcionalmente:
+- `memory`: MemoryManager para recuperar contexto histórico.
+- `agent_registry`: para conocer capacidades de agentes.
+- `tool_registry`: para filtrar herramientas sugeridas.
+
+#### Planificación Basada en LLM (Futuro)
+
+La interfaz `Planner.plan(message, context) -> list[dict]` está
+diseñada para que un planner basado en LLM (Sprint 2+) pueda
+reemplazar el heurístico sin cambiar callers.
+
+### 9.7 Observabilidad
+
+#### MetricsCollector
+
+Subscrito al EventBus, mantiene:
+
+**Contadores:**
+- `tasks_created`, `tasks_started`, `tasks_completed`, `tasks_failed`, `tasks_cancelled`, `tasks_paused`, `tasks_resumed`
+- `task_retries`, `task_errors_by_type.{type}`
+- `workflows_created`, `workflows_started`, `workflows_completed`, `workflows_failed`, `workflows_cancelled`
+- `agent_invocations`, `agent_completions`, `agent_failures`
+- `agent_invocations.{name}`, `agent_errors_by_type.{type}`
+- `tool_requests`, `tool_executions`, `tool_failures`, `tool_denials`
+- `tool_requests.{name}`, `tool_executions.{name}`, `tool_failures.{name}`, `tool_denials.{name}`
+- `tool_errors_by_type.{type}`
+
+**Histogramas:**
+- `agent_duration_ms.total`, `agent_duration_ms.{agent_name}`
+- `tool_duration_ms.total`, `tool_duration_ms.{name}`
+
+**Audit Trail:**
+- Buffer circular de los últimos 500 eventos con timestamp y payload.
+
+#### Snapshot
+
+```python
+metrics.snapshot()
+# {
+#   "counters": {"tasks_created": 5, ...},
+#   "histograms": {"agent_duration_ms.echo": {"count": 5, "avg": 12.4, ...}},
+#   "audit_count": 23,
+#   "audit_last_20": [...],
+# }
+```
+
+#### StructuredLogger
+
+Logger que emite una línea JSON por registro:
+
+```json
+{"ts": 1720900000.123, "level": "INFO", "logger": "orchestrator",
+ "msg": "message received", "task_id": "t1", "session_id": "s1",
+ "correlation_id": "cid-1"}
+```
+
+Soporta `correlation_id` para trazabilidad distribuida y métodos
+`with_correlation_id(cid)` para crear loggers derivados.
+
+#### AuditRecorder
+
+Buffer en memoria para tests y debugging. Expone `by_type(event_type)`
+para filtrar entradas por tipo de evento.
+
+### 9.8 Catálogo de Eventos Extendido
+
+Sprint 1.7 añade los siguientes eventos al catálogo:
+
+| Evento | Emitido por | Cuándo |
+|---|---|---|
+| `task.created` | TaskManager | Nueva tarea |
+| `task.started` | TaskManager | Tarea pasa a RUNNING |
+| `task.completed` | TaskManager | Tarea COMPLETED |
+| `task.failed` | TaskManager / Pipeline | Tarea FAILED |
+| `task.cancelled` | TaskManager | Tarea CANCELLED |
+| `task.paused` | TaskManager | Tarea pasa a WAITING |
+| `task.resumed` | TaskManager | Tarea vuelve a READY |
+| `workflow.created` | WorkflowManager | Workflow registrado |
+| `workflow.started` | WorkflowManager | Workflow comienza ejecución |
+| `workflow.completed` | WorkflowManager | Workflow terminó OK |
+| `workflow.failed` | WorkflowManager | Workflow falló |
+| `workflow.cancelled` | WorkflowManager | Workflow cancelado |
+| `planner.plan.created` | Planner | Plan generado |
+| `planner.decision` | Planner | Una decisión por subtarea |
+| `metric.recorded` | MetricsCollector | Métrica registrada (futuro) |
+
+### 9.9 Ejemplo Completo: Workflow con Planner
+
+```python
+import asyncio
+from src import (
+    EventBus, Orchestrator, TaskManager, WorkflowBuilder,
+    WorkflowManager, Planner, MetricsCollector,
+)
+
+async def main():
+    bus = EventBus()
+    metrics = MetricsCollector(bus)
+    await metrics.start()
+
+    orch = Orchestrator(event_bus=bus)
+    orch.attach_planner(Planner(event_bus=bus))
+    await orch.initialize()
+
+    # El usuario pide algo que dispara el Planner.
+    plan = await orch.planner.plan_detailed(
+        "Lee el archivo /etc/hosts",
+        context={"session_id": "s1"},
+    )
+
+    # Construir un workflow desde el plan.
+    tm = TaskManager(event_bus=bus)
+    builder = WorkflowBuilder("file_read").with_task_manager(tm)
+    for st in plan.subtasks:
+        builder.add_task(
+            st.name,
+            agent_name=st.suggested_agent or "echo",
+            depends_on=st.depends_on,
+        )
+    wf = await builder.build_async()
+
+    # Ejecutar el workflow.
+    wfm = WorkflowManager(tm, event_bus=bus)
+
+    async def executor(task):
+        # Aquí se invocaría al Orchestrator para cada subtarea.
+        return f"result-{task.name}"
+
+    final = await wfm.run(wf, executor)
+    print(f"Workflow final state: {final.state.value}")
+
+    # Métricas.
+    snap = metrics.snapshot()
+    print(f"Total tasks created: {snap['counters']['tasks_created']}")
+
+asyncio.run(main())
+```
+
+### 9.10 Decisiones de Diseño (Sprint 1.7)
+
+| Decisión | Justificación |
+|---|---|
+| Pipeline único centralizado | Elimina rutas duplicadas, centraliza errores |
+| Etapas como corrutinas separadas | Facilita tests, reutilización y reemplazo |
+| `PipelineError` con `stage` y `error_type` | Trazabilidad granular de fallos |
+| Task como unidad direccionable | Permite pausa/reanudación/cancelación |
+| TaskManager storage-only | Separación clara entre estado y ejecución |
+| Workflow como DAG validado | Previene ciclos, permite paralelismo |
+| `executor` inyectado en WorkflowManager.run | Motor agnóstico al backend |
+| Planner heurístico primero | Funciona sin LLM; interfaz LLM-ready |
+| Métricas en proceso (no Prometheus) | Sin dependencias externas; exporter futuro |
+| Audit buffer circular | Buffer en memoria acotado (500 entradas) |
+| StructuredLogger con correlation_id | Trazabilidad distribuida lista para usar |
+
+### 9.11 Riesgos y Limitaciones Actuales
+
+| Riesgo | Mitigación |
+|---|---|
+| TaskManager crece sin límite | LRU en `_history` (MAX_HISTORY=200) |
+| WorkflowManager no persiste DAGs | Pendiente: persistencia en Sprint 1.8+ |
+| Planner heurístico es limitado | LLM planner en Sprint 2 |
+| Métricas en RAM se pierden al reiniciar | Pendiente: exporter Prometheus en futuro |
+| `_active_tasks` por nombre en ToolExecutor | Pendiente: keyed por execution_id |
+
+### 9.12 Próximos Pasos (Sprint 1.8)
+
+- Integrar el Planner en el pipeline por defecto (cuando un LLM
+  esté disponible).
+- Persistir workflows en SQLite para recuperación tras restart.
+- Exportador Prometheus para métricas.
+- Scheduler basado en prioridades para TaskManager.
+- Integración completa del sistema de permisos en el pipeline.
