@@ -1,0 +1,15 @@
+[project]
+name = "liz-coder-plus-llm"
+version = "0.2.0"
+description = "LLM engine for Liz Coder Plus - unified provider interface"
+authors = [{ name = "caos1codex-hash" }]
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.7.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
