@@ -47,6 +47,15 @@ from src.protocols import Agent, Memory, Tool  # noqa: F401
 from src.session_manager import ChatTurn, SessionManager, SessionState  # noqa: F401
 from src.task import Task, TaskManager, TaskPriority, TaskState  # noqa: F401
 from src.tool_executor import ToolExecutionResult, ToolExecutor  # noqa: F401
+from src.workflow import (  # noqa: F401
+    Workflow,
+    WorkflowBuilder,
+    WorkflowCancelled,
+    WorkflowFailed,
+    WorkflowManager,
+    WorkflowNode,
+    WorkflowState,
+)
 from src.ws_connection import WebSocketConnection  # noqa: F401
 from src.ws_manager import WebSocketManager  # noqa: F401
 
