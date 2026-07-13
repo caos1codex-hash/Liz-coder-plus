@@ -9,17 +9,32 @@ from src.events import (  # noqa: F401
     ASSISTANT_RESPONSE_SENT,
     MEMORY_RETRIEVED,
     MEMORY_STORED,
+    METRIC_RECORDED,
     PERMISSION_GRANTED,
     PERMISSION_PROMPTED,
     PERMISSION_REVOKED,
+    PLANNER_DECISION,
+    PLANNER_PLAN_CREATED,
     SYSTEM_STARTED,
     SYSTEM_STOPPED,
+    TASK_CANCELLED,
+    TASK_COMPLETED,
+    TASK_CREATED,
+    TASK_FAILED,
+    TASK_PAUSED,
+    TASK_RESUMED,
+    TASK_STARTED,
     TOOL_APPROVED,
     TOOL_DENIED,
     TOOL_EXECUTED,
     TOOL_FAILED,
     TOOL_REQUESTED,
     USER_MESSAGE_RECEIVED,
+    WORKFLOW_CANCELLED,
+    WORKFLOW_COMPLETED,
+    WORKFLOW_CREATED,
+    WORKFLOW_FAILED,
+    WORKFLOW_STARTED,
 )
 from src.orchestrator import Orchestrator  # noqa: F401
 from src.pipeline import (  # noqa: F401
@@ -30,6 +45,7 @@ from src.pipeline import (  # noqa: F401
 )
 from src.protocols import Agent, Memory, Tool  # noqa: F401
 from src.session_manager import ChatTurn, SessionManager, SessionState  # noqa: F401
+from src.task import Task, TaskManager, TaskPriority, TaskState  # noqa: F401
 from src.tool_executor import ToolExecutionResult, ToolExecutor  # noqa: F401
 from src.ws_connection import WebSocketConnection  # noqa: F401
 from src.ws_manager import WebSocketManager  # noqa: F401

@@ -31,6 +31,29 @@ PERMISSION_PROMPTED = "permission.prompted"
 PERMISSION_GRANTED = "permission.granted"
 PERMISSION_REVOKED = "permission.revoked"
 
+# Task lifecycle (Sprint 1.7 — Phase 3)
+TASK_CREATED = "task.created"
+TASK_STARTED = "task.started"
+TASK_COMPLETED = "task.completed"
+TASK_FAILED = "task.failed"
+TASK_CANCELLED = "task.cancelled"
+TASK_PAUSED = "task.paused"
+TASK_RESUMED = "task.resumed"
+
+# Workflow lifecycle (Sprint 1.7 — Phase 4)
+WORKFLOW_CREATED = "workflow.created"
+WORKFLOW_STARTED = "workflow.started"
+WORKFLOW_COMPLETED = "workflow.completed"
+WORKFLOW_FAILED = "workflow.failed"
+WORKFLOW_CANCELLED = "workflow.cancelled"
+
+# Planner lifecycle (Sprint 1.7 — Phase 5)
+PLANNER_PLAN_CREATED = "planner.plan.created"
+PLANNER_DECISION = "planner.decision"
+
+# Observability (Sprint 1.7 — Phase 6)
+METRIC_RECORDED = "metric.recorded"
+
 # System lifecycle
 SYSTEM_STARTED = "system.started"
 SYSTEM_STOPPED = "system.stopped"
