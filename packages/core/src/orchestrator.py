@@ -5,20 +5,23 @@ input from the API layer, decides which agent to invoke (via the
 AgentRouter), coordinates session/memory access, dispatches tools, and
 emits events.
 
-Sprint 1 - Prompt 2: the orchestrator now wires together the
-WebSocketManager, SessionManager and AgentRouter. Tools and persistent
-memory land in Sprint 2 / Sprint 3.
+Sprint 1 - Prompt 3: connected to the persistent memory system.
+When a MemoryManager is provided, every user and assistant message
+is persisted to SQLite via the SessionManager.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from src.agent_router import AgentRouter, EchoAgent
 from src.protocols import Agent, Memory, Tool
 from src.session_manager import SessionManager
 from src.ws_manager import WebSocketManager
+
+if TYPE_CHECKING:
+    from src.memory.manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +29,11 @@ logger = logging.getLogger(__name__)
 class Orchestrator:
     """Central coordinator for agents, memory, sessions and tools.
 
-    Sprint 1 - Prompt 2 wiring:
+    Wiring:
       - WebSocketManager  -> tracks live connections
       - SessionManager    -> tracks conversation history per session
       - AgentRouter       -> selects an agent per message
+      - MemoryManager     -> persists messages to SQLite (optional)
     """
 
     def __init__(
@@ -44,7 +48,7 @@ class Orchestrator:
         self._router = router or AgentRouter()
         self._agents: dict[str, Agent] = {}
         self._tools: dict[str, Tool] = {}
-        self._memory: Memory | None = None
+        self._memory: MemoryManager | None = None
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
@@ -88,10 +92,18 @@ class Orchestrator:
         self._tools[tool.name] = tool
         logger.debug("Registered tool '%s'", tool.name)
 
-    def attach_memory(self, memory: Memory) -> None:
-        """Attach a memory backend."""
+    def attach_memory(self, memory: MemoryManager) -> None:
+        """Attach a persistent memory backend.
+
+        The MemoryManager is wired to the SessionManager so that
+        all conversation turns are persisted to SQLite.
+
+        Args:
+            memory: An initialized MemoryManager instance.
+        """
         self._memory = memory
-        logger.debug("Memory backend attached")
+        self._sessions.attach_memory(memory)
+        logger.info("Persistent memory connected to Orchestrator")
 
     # ------------------------------------------------------------------
     # Message handling
@@ -106,9 +118,15 @@ class Orchestrator:
     ) -> dict[str, Any]:
         """Handle an incoming user message.
 
-        Records the user turn in the session history, routes the
-        message to an agent, records the assistant turn, and returns
-        a response envelope ready to be serialized.
+        Flow:
+            1. Persist user state and the inbound turn.
+            2. Build context from session history.
+            3. Route to agent.
+            4. Record assistant turn.
+            5. Return response envelope.
+
+        When a MemoryManager is attached, steps 1 and 4 also persist
+        to SQLite via the SessionManager.
 
         Args:
             message:    Raw user input.
@@ -127,7 +145,7 @@ class Orchestrator:
 
         # Persist user state and the inbound turn.
         self._sessions.set_mode(session_id, mode)
-        self._sessions.append_turn(
+        await self._sessions.append_turn(
             session_id, role="user", content=message, metadata={"mode": mode}
         )
 
@@ -138,7 +156,7 @@ class Orchestrator:
             response_text = await agent.handle(message, context)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Agent failed to handle message")
-            self._sessions.append_turn(
+            await self._sessions.append_turn(
                 session_id,
                 role="system",
                 content=f"error: {exc}",
@@ -152,8 +170,8 @@ class Orchestrator:
                 "error": str(exc),
             }
 
-        # Record the assistant turn.
-        self._sessions.append_turn(
+        # Record the assistant turn (persisted to SQLite if memory attached).
+        await self._sessions.append_turn(
             session_id,
             role="assistant",
             content=response_text,
@@ -178,9 +196,9 @@ class Orchestrator:
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream an assistant response in chunks.
 
-        Sprint 1 - Prompt 2: the response is generated synchronously
-        and then split into word-bounded chunks to demonstrate the
-        streaming protocol. Sprint 5 will plug in real LLM streaming.
+        The response is generated synchronously and then split into
+        word-bounded chunks to demonstrate the streaming protocol.
+        Sprint 5 will plug in real LLM streaming.
 
         Yields:
             Envelope dicts. The first chunk has type="chunk" with

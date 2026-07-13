@@ -44,8 +44,9 @@
     ]
   },
   "memory": {
-    "backend": "sqlite",
-    "database_url": "sqlite+aiosqlite:///./lizcoderplus_dev.db",
-    "short_term_ttl_minutes": 60
+    "enabled": true,
+    "provider": "sqlite",
+    "path": "data/liz_memory.db",
+    "max_history": 200
   }
 }
