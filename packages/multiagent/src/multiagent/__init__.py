@@ -58,6 +58,7 @@ from .workflow.event_bus import Event, EventBus
 from .workflow.load_balancer import AgentMetrics, LoadBalancer, LoadBalancerWeights
 from .workflow.models import Step, Workflow
 from .workflow.orchestrator import WorkflowOrchestrator
+from .workflow.observability import Histogram, MetricsCollector
 from .workflow.scheduler import ScheduleDecision, Scheduler, SchedulerConfig
 
 __all__ = [
@@ -106,8 +107,10 @@ __all__ = [
     "FailoverAction",
     "FailoverPolicy",
     "FileSnapshot",
+    "Histogram",
     "LoadBalancer",
     "LoadBalancerWeights",
+    "MetricsCollector",
     "ScheduleDecision",
     "Scheduler",
     "SchedulerConfig",
