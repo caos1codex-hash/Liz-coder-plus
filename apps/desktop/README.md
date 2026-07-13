@@ -4,7 +4,7 @@
 
 ## Estado
 
-**Sprint 1 - Prompt 1 (Foundation)** — Esqueleto del proyecto, sin UI funcional todavía.
+**Sprint 1 - Prompt 2 (WebSocket layer)** — UI mínima de chat + ChatService.
 
 ## Arquitectura
 
@@ -12,8 +12,12 @@
 src/
 ├── App.xaml(.cs)          → Punto de entrada + DI container
 ├── Views/                 → Vistas XAML (UI)
+│   ├── MainWindow.xaml    → Chat mínimo (textbox + botón + mensajes)
+│   └── MainWindow.xaml.cs → Code-behind que conecta con ChatService
 ├── ViewModels/            → View models (MVVM, CommunityToolkit.Mvvm)
-├── Services/              → Servicios (backend client, configuración, etc.)
+├── Services/              → Servicios
+│   ├── IBackendClient.cs  → Contrato abstracto
+│   └── ChatService.cs     → Cliente WebSocket (Connect/Send/Receive)
 ├── Models/                → Modelos de datos y configuración
 └── Assets/                → Recursos gráficos
 ```

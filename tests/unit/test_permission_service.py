@@ -10,11 +10,18 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND_SRC = ROOT / "apps" / "backend" / "src"
-sys.path.insert(0, str(BACKEND_SRC))
+# The backend uses absolute imports like `from src.core.config import ...`
+# so we need the backend ROOT (not its src/) on sys.path.
+BACKEND_ROOT = ROOT / "apps" / "backend"
+sys.path.insert(0, str(BACKEND_ROOT))
 
-from core.config import PermissionsConfig  # noqa: E402
-from permissions.service import PermissionService  # noqa: E402
+# Drop any cached `src` namespace so the backend's `src` is the one that
+# gets imported, regardless of test execution order.
+for _k in [k for k in list(sys.modules) if k == "src" or k.startswith("src.")]:
+    sys.modules.pop(_k, None)
+
+from src.core.config import PermissionsConfig  # noqa: E402
+from src.permissions.service import PermissionService  # noqa: E402
 
 
 def _service(mode: str, allowed: list[str], denied: list[str]) -> PermissionService:

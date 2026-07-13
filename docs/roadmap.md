@@ -4,7 +4,7 @@
 
 ## Sprint 1 — Cimientos
 
-### Prompt 1 (actual) — v0.1.1
+### Prompt 1 — v0.1.1
 - [x] Estructura monorepo creada.
 - [x] Arquitectura base definida.
 - [x] Sistema de permisos inicial (enum + servicio).
@@ -12,12 +12,17 @@
 - [x] Documentación inicial (`README.md`, `docs/`).
 - [x] Repositorio Git inicializado y primer commit.
 
-### Prompt 2 — v0.1.2
-- [ ] Backend FastAPI funcional.
-- [ ] Endpoints `/health` y `/status` operativos.
-- [ ] Stub de WebSocket en `/ws`.
-- [ ] Carga de configuración real.
-- [ ] Conexión inicial con el orquestador.
+### Prompt 2 (actual) — v0.1.2
+- [x] Backend FastAPI funcional.
+- [x] Endpoints `/health` y `/status` operativos (con métricas WS).
+- [x] WebSocket endpoint `/ws/chat` con streaming.
+- [x] WebSocketManager (conexiones, broadcast, eventos, desconexiones).
+- [x] SessionManager (session_id, historial temporal, estado de usuario).
+- [x] AgentRouter con EchoAgent por defecto.
+- [x] Orchestrator integrado con WS + Session + Router.
+- [x] ChatService.cs en desktop (Connect/Send/Receive async).
+- [x] UI mínima: textbox + botón + área de mensajes.
+- [x] 56 tests pasando (48 unitarios + 8 integración WS).
 
 ## Sprint 2 — Memoria y agentes
 - [ ] SQLite + SQLAlchemy funcionando.

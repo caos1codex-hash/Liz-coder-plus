@@ -9,12 +9,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Add backend src to path for import
+# The backend uses absolute imports like `from src.permissions.modes`,
+# so we need the backend ROOT (not its src/) on sys.path.
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND_SRC = ROOT / "apps" / "backend" / "src"
-sys.path.insert(0, str(BACKEND_SRC))
+BACKEND_ROOT = ROOT / "apps" / "backend"
+sys.path.insert(0, str(BACKEND_ROOT))
 
-from permissions.modes import PermissionMode  # noqa: E402
+# Drop any cached `src` namespace so the backend's `src` is the one that
+# gets imported, regardless of test execution order.
+for _k in [k for k in list(sys.modules) if k == "src" or k.startswith("src.")]:
+    sys.modules.pop(_k, None)
+
+from src.permissions.modes import PermissionMode  # noqa: E402
 
 
 def test_confirmation_mode_requires_confirmation() -> None:

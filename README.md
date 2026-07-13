@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.1.1`
-**Estado:** Sprint 1 — Cimientos del proyecto (Prompt 1)
+**Versión:** `v0.1.2`
+**Estado:** Sprint 1 — Capa de comunicación WebSocket (Prompt 2)
 
 ---
 

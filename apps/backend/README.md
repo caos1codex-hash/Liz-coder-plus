@@ -4,17 +4,20 @@
 
 ## Estado
 
-**Sprint 1 - Prompt 1 (Foundation)** — Esqueleto del proyecto.
+**Sprint 1 - Prompt 2 (WebSocket layer)** — Backend con WebSocket funcional.
 
 ## Arquitectura
 
 ```
 src/
 ├── api/             → Endpoints REST y WebSocket
+│   ├── main.py      → App FastAPI + lifespan + /health + /status
+│   ├── ws_adapter.py → Adaptador FastAPI ↔ WebSocketConnection
+│   └── ws_routes.py → Endpoint /ws/chat + WebSocketManager global
 ├── core/            → Orquestador, eventos, configuración
 ├── events/          → Sistema de eventos interno
 ├── permissions/     → Sistema de permisos
-└── main.py          → Punto de entrada de la aplicación
+└── __init__.py      → Versión del paquete
 ```
 
 ## Requisitos
@@ -49,12 +52,19 @@ Documentación interactiva:
 ## Pruebas
 
 ```bash
-pytest -v --cov=src
+# Desde la raíz del repositorio:
+python -m pytest tests/ -v
 ```
 
-## Próximos pasos (Sprint 1 - Prompt 2)
+Los tests cubren:
+- Endpoints REST `/health` y `/status`.
+- WebSocket `/ws/chat`: conexión, envío, recepción streaming,
+  desconexión limpia, validación de errores.
+- WebSocketManager, SessionManager, AgentRouter, Orchestrator
+  (tests unitarios sin red).
 
-- Implementar endpoints de salud (`/health`, `/status`).
-- Stub de WebSocket para comunicación con la app desktop.
-- Cargar configuración desde `config/`.
-- Conectar al orquestador `core`.
+## Próximos pasos (Sprint 2)
+
+- Memoria SQLite persistente para el SessionManager.
+- Primer agente conversacional real (más allá de EchoAgent).
+- Integración con modelos IA.

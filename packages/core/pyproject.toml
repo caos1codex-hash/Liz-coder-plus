@@ -1,0 +1,13 @@
+[project]
+name = "liz-core"
+version = "0.1.2"
+description = "Core orchestration package for Liz Coder Plus"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

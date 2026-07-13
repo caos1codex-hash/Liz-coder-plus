@@ -2,11 +2,10 @@
 // File: App.xaml.cs
 // Project: Liz Coder Plus - Desktop
 // Description: Application entry point and DI container setup.
-// Sprint: 1 - Prompt 1 (Foundation)
+// Sprint: 1 - Prompt 2 (chat wiring)
 // ============================================================
 
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using LizCoderPlus.Desktop.Views;
 using Microsoft.UI.Xaml;
 
 namespace LizCoderPlus.Desktop;
@@ -17,7 +16,7 @@ namespace LizCoderPlus.Desktop;
 /// </summary>
 public partial class App : Application
 {
-    private readonly IHost _host;
+    private MainWindow? _mainWindow;
 
     /// <summary>
     /// Initializes the application and configures the DI container.
@@ -25,21 +24,6 @@ public partial class App : Application
     public App()
     {
         this.InitializeComponent();
-
-        _host = Host.CreateDefaultBuilder()
-            .ConfigureServices(ConfigureServices)
-            .Build();
-    }
-
-    /// <summary>
-    /// Registers all services required by the desktop application.
-    /// </summary>
-    private static void ConfigureServices(IServiceCollection services)
-    {
-        // TODO (Sprint 1 - Prompt 2+): register views, view models, and services.
-        // services.AddSingleton<MainWindow>();
-        // services.AddTransient<ChatViewModel>();
-        // services.AddSingleton<IBackendClient, WebSocketBackendClient>();
     }
 
     /// <summary>
@@ -48,7 +32,7 @@ public partial class App : Application
     /// <param name="args">Event arguments.</param>
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        // TODO (Sprint 4): show the main window with the chat interface.
-        // _host.Services.GetRequiredService<MainWindow>().Activate();
+        _mainWindow = new MainWindow();
+        _mainWindow.Activate();
     }
 }

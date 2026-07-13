@@ -58,8 +58,20 @@ backend; el desktop es una capa fina de presentación.
 
 - **Orquestador:** punto central que recibe cada mensaje, decide el
   agente, coordina memoria y herramientas, y emite eventos.
+- **WebSocketManager:** registro de conexiones activas. Soporta
+  broadcast global, broadcast por sesión y envío dirigido. Expone
+  callbacks `on_connect` / `on_disconnect` para auditoría.
+- **SessionManager:** almacena en memoria el historial temporal de
+  cada conversación (hasta 200 turnos), el idioma preferido del usuario
+  y el último modo de permiso solicitado.
+- **AgentRouter:** decide qué agente atiende cada mensaje. Sprint 1
+  incluye un `EchoAgent` por defecto que devuelve un saludo en español.
 - **EventBus:** bus pub/sub interno para desacoplar módulos.
 - **Eventos:** el catálogo está en `packages/core/src/events.py`.
+
+El paquete `core` se expone al backend a través de un shim
+`packages/core/liz_core.py` que evita colisiones de namespace `src`
+entre el backend y el core.
 
 ### 2.4 Memory (`packages/memory`)
 
@@ -90,17 +102,27 @@ backend; el desktop es una capa fina de presentación.
 
 ## 3. Flujo de un mensaje
 
-1. El usuario escribe un mensaje en el Desktop.
-2. El Desktop lo envía por WebSocket al backend.
-3. El backend lo pasa al `Orchestrator.handle_message()`.
-4. El orquestador:
-   - Lee/escribe `Memory` para mantener contexto.
-   - Selecciona un `Agent` y lo invoca.
-   - Si el agente requiere una herramienta, consulta el
-     `PermissionService` antes de ejecutarla.
-   - Publica eventos en el `EventBus` para auditoría.
-5. El backend devuelve la respuesta al Desktop por WebSocket.
-6. El Desktop la muestra al usuario.
+1. El usuario escribe un mensaje en el Desktop (`MainWindow` → `ChatService`).
+2. El `ChatService` abre (o reutiliza) una conexión WebSocket a `/ws/chat`
+   y envía un `WebSocketChatRequest`:
+   ```json
+   { "message": "Hola Liz", "session_id": "uuid", "mode": "confirmation" }
+   ```
+3. El backend recibe el JSON, valida los campos y delega en el
+   `WebSocketManager` para registrar/enrutar la conexión.
+4. El `Orchestrator.handle_message()` se ejecuta:
+   - Persiste el turno del usuario en el `SessionManager`.
+   - Consulta el `AgentRouter` para seleccionar un agente.
+   - Invoca al agente, que produce una respuesta de texto.
+   - Persiste el turno del asistente.
+5. El orquestador devuelve la respuesta al endpoint WebSocket.
+6. El endpoint emite uno o varios `WebSocketChatResponse` (chunks
+   mientras se genera el texto, luego un sobre final con
+   `status="completed"`).
+7. El `ChatService` del Desktop recibe los sobres y los reenvía al
+   hilo de UI, que los acumula en la burbuja del asistente.
+8. Cuando llega el sobre final, la burbuja se cierra con el texto
+   completo.
 
 ## 4. Decisiones de diseño
 
