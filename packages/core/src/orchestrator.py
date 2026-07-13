@@ -6,19 +6,29 @@ AgentRouter), coordinates session/memory access, dispatches tools, and
 emits events.
 
 Sprint 1 - Prompt 3: connected to the persistent memory system.
-Sprint 1.5: agent validation, execution timeout, improved error handling,
-and lifecycle integration.
+Sprint 1.5: agent validation, execution timeout, EventBus integration,
+ToolExecutor for permission-gated tool execution.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from src.agent_router import AgentRouter, EchoAgent
-from src.protocols import Agent, Memory, Tool
+from src.event_bus import EventBus
+from src.events import (
+    AGENT_COMPLETED,
+    AGENT_FAILED,
+    AGENT_INVOKED,
+    TOOL_REQUESTED,
+    USER_MESSAGE_RECEIVED,
+)
+from src.protocols import Agent, Tool
 from src.session_manager import SessionManager
+from src.tool_executor import ToolExecutor
 from src.ws_manager import WebSocketManager
 
 if TYPE_CHECKING:
@@ -37,6 +47,8 @@ class Orchestrator:
       - WebSocketManager  -> tracks live connections
       - SessionManager    -> tracks conversation history per session
       - AgentRouter       -> selects an agent per message
+      - EventBus          -> publishes lifecycle events
+      - ToolExecutor      -> executes tools with permission gating
       - MemoryManager     -> persists messages to SQLite (optional)
 
     Agents are validated against the ``Agent`` Protocol at registration.
@@ -50,11 +62,15 @@ class Orchestrator:
         ws_manager: WebSocketManager | None = None,
         session_manager: SessionManager | None = None,
         router: AgentRouter | None = None,
+        event_bus: EventBus | None = None,
+        tool_executor: ToolExecutor | None = None,
         agent_timeout: float = DEFAULT_AGENT_TIMEOUT,
     ) -> None:
         self._ws_manager = ws_manager or WebSocketManager()
         self._sessions = session_manager or SessionManager()
         self._router = router or AgentRouter()
+        self._bus = event_bus or EventBus()
+        self._tool_executor = tool_executor or ToolExecutor(event_bus=self._bus)
         self._agents: dict[str, Agent] = {}
         self._tools: dict[str, Tool] = {}
         self._memory: MemoryManager | None = None
@@ -65,11 +81,13 @@ class Orchestrator:
         self._agents[default.name] = default
 
         logger.info(
-            "Orchestrator initialized (ws=%d sessions=%d agents=%d timeout=%.1fs)",
+            "Orchestrator initialized (ws=%d sessions=%d agents=%d "
+            "timeout=%.1fs bus=%d)",
             self._ws_manager.connection_count,
             self._sessions.session_count,
             len(self._agents),
             self._agent_timeout,
+            len(self._bus.event_types()),
         )
 
     # ------------------------------------------------------------------
@@ -87,6 +105,14 @@ class Orchestrator:
     @property
     def router(self) -> AgentRouter:
         return self._router
+
+    @property
+    def event_bus(self) -> EventBus:
+        return self._bus
+
+    @property
+    def tool_executor(self) -> ToolExecutor:
+        return self._tool_executor
 
     @property
     def agent_timeout(self) -> float:
@@ -146,6 +172,17 @@ class Orchestrator:
         logger.info("Persistent memory connected to Orchestrator")
 
     # ------------------------------------------------------------------
+    # Event helpers
+    # ------------------------------------------------------------------
+
+    async def _emit(self, event_type: str, payload: Any = None) -> None:
+        """Emit an event to the bus, isolating failures."""
+        try:
+            await self._bus.publish(event_type, payload)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to emit event '%s'", event_type)
+
+    # ------------------------------------------------------------------
     # Message handling
     # ------------------------------------------------------------------
 
@@ -159,15 +196,14 @@ class Orchestrator:
         """Handle an incoming user message.
 
         Flow:
-            1. Persist user state and the inbound turn.
-            2. Build context from session history.
-            3. Route to agent.
-            4. Execute agent with timeout.
-            5. Record assistant turn.
-            6. Return response envelope.
-
-        When a MemoryManager is attached, steps 1 and 5 also persist
-        to SQLite via the SessionManager.
+            1. Emit user.message.received event.
+            2. Persist user state and the inbound turn.
+            3. Build context from session history.
+            4. Route to agent (emit agent.invoked).
+            5. Execute agent with timeout.
+            6. Emit agent.completed or agent.failed.
+            7. Record assistant turn.
+            8. Return response envelope.
 
         Args:
             message:    Raw user input.
@@ -185,6 +221,13 @@ class Orchestrator:
             len(message),
         )
 
+        # Emit user message received event.
+        await self._emit(USER_MESSAGE_RECEIVED, {
+            "session_id": session_id,
+            "message_length": len(message),
+            "mode": mode,
+        })
+
         # Persist user state and the inbound turn.
         self._sessions.set_mode(session_id, mode)
         await self._sessions.append_turn(
@@ -197,14 +240,28 @@ class Orchestrator:
             agent = await self._router.route(message, context)
             agent_name = agent.name
 
+            # Emit agent.invoked event.
+            await self._emit(AGENT_INVOKED, {
+                "agent_name": agent_name,
+                "session_id": session_id,
+                "message_length": len(message),
+            })
+
             # Execute with timeout to prevent indefinite blocking.
-            import time
             start = time.monotonic()
             response_text = await asyncio.wait_for(
                 agent.handle(message, context),
                 timeout=self._agent_timeout,
             )
             duration_ms = int((time.monotonic() - start) * 1000)
+
+            # Emit agent.completed event.
+            await self._emit(AGENT_COMPLETED, {
+                "agent_name": agent_name,
+                "session_id": session_id,
+                "duration_ms": duration_ms,
+                "response_length": len(response_text),
+            })
 
             logger.info(
                 "Agent '%s' completed in %dms for session %s",
@@ -219,6 +276,14 @@ class Orchestrator:
                 self._agent_timeout,
                 session_id,
             )
+
+            await self._emit(AGENT_FAILED, {
+                "agent_name": "unknown",
+                "session_id": session_id,
+                "error": "timeout",
+                "duration_ms": int(self._agent_timeout * 1000),
+            })
+
             await self._sessions.append_turn(
                 session_id,
                 role="system",
@@ -239,6 +304,14 @@ class Orchestrator:
         except (ValueError, TypeError) as exc:
             # Validation / type errors from the agent.
             logger.warning("Agent validation error: %s", exc)
+
+            await self._emit(AGENT_FAILED, {
+                "agent_name": "unknown",
+                "session_id": session_id,
+                "error_type": "validation",
+                "error": str(exc),
+            })
+
             await self._sessions.append_turn(
                 session_id,
                 role="system",
@@ -255,6 +328,14 @@ class Orchestrator:
         except Exception as exc:  # noqa: BLE001
             # Unexpected errors from agents or routing.
             logger.exception("Agent failed to handle message")
+
+            await self._emit(AGENT_FAILED, {
+                "agent_name": "unknown",
+                "session_id": session_id,
+                "error_type": "unexpected",
+                "error": str(exc),
+            })
+
             await self._sessions.append_turn(
                 session_id,
                 role="system",
@@ -286,6 +367,39 @@ class Orchestrator:
             "agent_name": agent_name,
             "duration_ms": duration_ms,
         }
+
+    async def execute_tool(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        *,
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        """Execute a registered tool with permission gating.
+
+        Args:
+            tool_name: Name of the registered tool.
+            params: Tool-specific parameters.
+            session_id: Session context for events/auditing.
+
+        Returns:
+            A dict with the ToolExecutionResult data plus tool_name.
+        """
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            return {
+                "tool_name": tool_name,
+                "decision": "deny",
+                "success": False,
+                "error": f"Tool '{tool_name}' is not registered.",
+                "duration_ms": 0,
+            }
+
+        result = await self._tool_executor.execute(
+            tool, params, session_id=session_id
+        )
+        result_dict = result.to_dict()
+        return result_dict
 
     async def stream_message(
         self,
