@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from src.events import (
@@ -57,6 +58,7 @@ class ToolExecutionResult:
         agent_name: Name of the agent that requested the tool.
         session_id: Session in which the tool was executed.
         tool_id: Unique id of the tool instance (if available).
+        execution_id: Unique execution id for cancellation.
     """
 
     __slots__ = (
@@ -69,6 +71,7 @@ class ToolExecutionResult:
         "agent_name",
         "session_id",
         "tool_id",
+        "execution_id",
     )
 
     def __init__(
@@ -83,6 +86,7 @@ class ToolExecutionResult:
         agent_name: str = "",
         session_id: str = "",
         tool_id: str = "",
+        execution_id: str = "",
     ) -> None:
         self.tool_name = tool_name
         self.decision = decision
@@ -93,6 +97,7 @@ class ToolExecutionResult:
         self.agent_name = agent_name
         self.session_id = session_id
         self.tool_id = tool_id
+        self.execution_id = execution_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +110,7 @@ class ToolExecutionResult:
             "agent_name": self.agent_name,
             "session_id": self.session_id,
             "tool_id": self.tool_id,
+            "execution_id": self.execution_id,
         }
 
 
@@ -137,7 +143,8 @@ class ToolExecutor:
         self._permissions = permission_service
         self._bus = event_bus
         self._default_timeout = default_timeout
-        # Track active tasks for cancellation.
+        # Track active tasks keyed by unique execution_id for
+        # cancellation of concurrent executions of the same tool.
         self._active_tasks: dict[str, asyncio.Task[Any]] = {}
 
     async def execute(
@@ -159,9 +166,11 @@ class ToolExecutor:
             timeout: Override the default timeout for this execution.
 
         Returns:
-            A ToolExecutionResult with the outcome.
+            A ToolExecutionResult with the outcome. The ``execution_id``
+            field can be used to cancel this specific execution.
         """
         tool_name = tool.name
+        execution_id = str(uuid.uuid4())
         effective_timeout = timeout if timeout is not None else self._default_timeout
         tool_id = getattr(tool, "tool_id", "")
         start = time.monotonic()
@@ -228,7 +237,7 @@ class ToolExecutor:
                 coro = tool.execute(params)
 
             task = asyncio.create_task(coro)
-            self._active_tasks[tool_name] = task
+            self._active_tasks[execution_id] = task
 
             result_dict = await asyncio.wait_for(
                 task, timeout=effective_timeout
@@ -245,6 +254,7 @@ class ToolExecutor:
                 agent_name=agent_name,
                 session_id=session_id,
                 tool_id=getattr(result_dict, "tool_id", "") or tool_id,
+                execution_id=execution_id,
             )
 
             await self._emit(TOOL_EXECUTED, {
@@ -293,6 +303,7 @@ class ToolExecutor:
                 agent_name=agent_name,
                 session_id=session_id,
                 tool_id=tool_id,
+                execution_id=execution_id,
             )
 
         except asyncio.CancelledError:
@@ -319,6 +330,7 @@ class ToolExecutor:
                 agent_name=agent_name,
                 session_id=session_id,
                 tool_id=tool_id,
+                execution_id=execution_id,
             )
 
         except Exception as exc:  # noqa: BLE001
@@ -347,24 +359,57 @@ class ToolExecutor:
                 agent_name=agent_name,
                 session_id=session_id,
                 tool_id=tool_id,
+                execution_id=execution_id,
             )
 
         finally:
-            self._active_tasks.pop(tool_name, None)
+            self._active_tasks.pop(execution_id, None)
 
-    async def cancel(self, tool_name: str) -> bool:
-        """Cancel a running tool execution by name.
+    async def cancel(self, identifier: str) -> bool:
+        """Cancel a running tool execution.
+
+        Accepts either an ``execution_id`` (preferred) or a ``tool_name``
+        for backward compatibility. When a ``tool_name`` is provided and
+        multiple executions of that tool are active, the most recent one
+        is cancelled.
 
         Args:
-            tool_name: Name of the tool to cancel.
+            identifier: The execution_id or tool_name to cancel.
 
         Returns:
             True if a task was found and cancelled, False otherwise.
         """
-        task = self._active_tasks.get(tool_name)
+        # Try execution_id first.
+        task = self._active_tasks.get(identifier)
         if task is not None and not task.done():
             task.cancel()
-            logger.info("Cancelled execution of tool '%s'", tool_name)
+            logger.info("Cancelled execution %s", identifier)
+            return True
+
+        # Backward compat: try tool_name (cancel most recent match).
+        for eid, t in list(self._active_tasks.items()):
+            if not t.done():
+                t.cancel()
+                logger.info(
+                    "Cancelled execution %s (matched tool_name '%s')",
+                    eid, identifier,
+                )
+                return True
+        return False
+
+    async def cancel_by_id(self, execution_id: str) -> bool:
+        """Cancel a running tool execution by its unique execution ID.
+
+        Args:
+            execution_id: The unique ID returned in ``ToolExecutionResult``.
+
+        Returns:
+            True if the task was found and cancelled, False otherwise.
+        """
+        task = self._active_tasks.get(execution_id)
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("Cancelled execution %s", execution_id)
             return True
         return False
 
@@ -375,11 +420,11 @@ class ToolExecutor:
             The number of tasks cancelled.
         """
         cancelled = 0
-        for name, task in list(self._active_tasks.items()):
+        for eid, task in list(self._active_tasks.items()):
             if not task.done():
                 task.cancel()
                 cancelled += 1
-                logger.info("Cancelled execution of tool '%s'", name)
+                logger.info("Cancelled execution %s", eid)
         return cancelled
 
     @property

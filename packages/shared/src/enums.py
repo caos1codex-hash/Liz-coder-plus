@@ -12,8 +12,8 @@ class PermissionMode(str, Enum):
     - AUTOMATIC: runs whitelisted actions without asking.
     """
 
-    CONFIRMATION = "Confirmation"
-    AUTOMATIC = "Automatic"
+    CONFIRMATION = "confirmation"
+    AUTOMATIC = "automatic"
 
 
 class AgentRole(str, Enum):

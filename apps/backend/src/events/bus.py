@@ -3,6 +3,14 @@
 Lightweight pub/sub implementation used to decouple modules within the
 backend. The orchestrator, agents, memory, and tools all communicate
 through this bus. Sprint 1 stub only.
+
+.. TODO(TD-001): This module is dead code — the backend uses the
+   core ``EventBus`` from ``packages/core/src/event_bus.py`` via
+   the ``liz_core.py`` shim.  No other module imports from this
+   file.  Defer deletion to Sprint 2.0 when ``liz_core.py`` is
+   replaced by standard package imports (pyproject.toml editable
+   installs), to avoid any risk of import breakage during the
+   migration.
 """
 
 from __future__ import annotations

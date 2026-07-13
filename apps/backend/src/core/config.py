@@ -33,7 +33,7 @@ class AIConfig(BaseModel):
 class PermissionsConfig(BaseModel):
     """Permission policy configuration."""
 
-    mode: Literal["Confirmation", "Automatic"] = "Confirmation"
+    mode: Literal["confirmation", "automatic"] = "confirmation"
     allowed_commands: list[str] = Field(default_factory=list)
     denied_commands: list[str] = Field(default_factory=list)
 

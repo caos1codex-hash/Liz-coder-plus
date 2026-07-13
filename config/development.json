@@ -9,7 +9,7 @@
     "api_key_env": "LIZ_AI_API_KEY"
   },
   "permissions": {
-    "mode": "Confirmation",
+    "mode": "confirmation",
     "allowed_commands": [
       "git status",
       "git log",

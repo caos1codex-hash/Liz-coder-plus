@@ -23,8 +23,8 @@ class PermissionMode(str, Enum):
     responses and configuration files.
     """
 
-    CONFIRMATION = "Confirmation"
-    AUTOMATIC = "Automatic"
+    CONFIRMATION = "confirmation"
+    AUTOMATIC = "automatic"
 
     @property
     def requires_confirmation(self) -> bool:
@@ -45,6 +45,6 @@ class PermissionMode(str, Enum):
         if not value:
             return cls.CONFIRMATION
         try:
-            return cls(value.capitalize())
+            return cls(value.lower())
         except ValueError:
             return cls.CONFIRMATION

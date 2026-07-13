@@ -252,11 +252,22 @@ async def stage_check_permissions(
 ) -> PipelineRequest:
     """Permission gate.
 
-    Currently a no-op for agent invocation (agents are trusted).
-    In the future this stage will check whether the selected agent
-    is allowed to invoke its declared tools under the current mode.
+    **Intentionally deferred to Sprint 2.** This stage is a no-op because
+    real agents with declared tool capabilities do not exist yet. When
+    Sprint 2 introduces LLM-backed agents that declare which tools they
+    intend to use, this stage will:
+
+      1. Inspect the selected agent's declared tool set.
+      2. Cross-reference with the ``PermissionService`` under the
+         current ``req.mode`` (confirmation / automatic).
+      3. Raise ``PipelineError`` if the agent is not authorised to
+         invoke any of its declared tools.
+
+    Currently agents are trusted and all tool-level permission checks
+    happen inside ``ToolExecutor.execute()`` when a ``permission_service``
+    is provided.
     """
-    # Reserved for future enforcement.
+    # Deferred: no agents with tool declarations exist yet (Sprint 2).
     return req
 
 

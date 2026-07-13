@@ -7,7 +7,7 @@ Pydantic v2 for validation and JSON (de)serialization.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -22,7 +22,7 @@ class ChatMessage(BaseModel):
     session_id: str
     role: AgentRole
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: MessageStatus = MessageStatus.COMPLETED
 
 
@@ -64,7 +64,7 @@ class PermissionPrompt(BaseModel):
     tool_name: str
     description: str
     params: dict[str, str] = Field(default_factory=dict)
-    mode: Literal["Confirmation", "Automatic"] = "Confirmation"
+    mode: Literal["confirmation", "automatic"] = "confirmation"
 
 
 class HealthStatus(BaseModel):
