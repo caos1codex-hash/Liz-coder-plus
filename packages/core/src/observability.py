@@ -31,7 +31,17 @@ from src.events import (
     AGENT_COMPLETED,
     AGENT_FAILED,
     AGENT_INVOKED,
+    CHECKPOINT_RESTORED,
+    CHECKPOINT_SAVED,
     METRIC_RECORDED,
+    RECOVERY_COMPLETED,
+    RECOVERY_STARTED,
+    SCHEDULER_JOB_CANCELLED,
+    SCHEDULER_JOB_COMPLETED,
+    SCHEDULER_JOB_FAILED,
+    SCHEDULER_JOB_RETRIED,
+    SCHEDULER_JOB_SCHEDULED,
+    SCHEDULER_JOB_STARTED,
     TASK_CANCELLED,
     TASK_COMPLETED,
     TASK_CREATED,
@@ -168,6 +178,17 @@ class MetricsCollector:
             (TOOL_EXECUTED, self._on_tool_executed),
             (TOOL_FAILED, self._on_tool_failed),
             (TOOL_DENIED, self._on_tool_denied),
+            # Sprint 1.8 — Scheduler and Recovery events.
+            (SCHEDULER_JOB_SCHEDULED, self._on_scheduler_job_scheduled),
+            (SCHEDULER_JOB_STARTED, self._on_scheduler_job_started),
+            (SCHEDULER_JOB_COMPLETED, self._on_scheduler_job_completed),
+            (SCHEDULER_JOB_FAILED, self._on_scheduler_job_failed),
+            (SCHEDULER_JOB_CANCELLED, self._on_scheduler_job_cancelled),
+            (SCHEDULER_JOB_RETRIED, self._on_scheduler_job_retried),
+            (RECOVERY_STARTED, self._on_recovery_started),
+            (RECOVERY_COMPLETED, self._on_recovery_completed),
+            (CHECKPOINT_SAVED, self._on_checkpoint_saved),
+            (CHECKPOINT_RESTORED, self._on_checkpoint_restored),
         ]
         for event_type, handler in subscriptions:
             self._bus.subscribe(event_type, handler)
@@ -353,6 +374,243 @@ class MetricsCollector:
             tool_name = payload.get("tool_name", "unknown")
             self.inc_counter(f"tool_denials.{tool_name}")
         self.record_audit(TOOL_DENIED, payload)
+
+    # ------------------------------------------------------------------
+    # Sprint 1.8 — Scheduler and Recovery event handlers
+    # ------------------------------------------------------------------
+
+    async def _on_scheduler_job_scheduled(self, payload: Any) -> None:
+        self.inc_counter("scheduler_jobs_scheduled")
+        self.record_audit("scheduler.job.scheduled", payload)
+
+    async def _on_scheduler_job_started(self, payload: Any) -> None:
+        self.inc_counter("scheduler_jobs_started")
+        self.record_audit("scheduler.job.started", payload)
+
+    async def _on_scheduler_job_completed(self, payload: Any) -> None:
+        self.inc_counter("scheduler_jobs_completed")
+        self.record_audit("scheduler.job.completed", payload)
+
+    async def _on_scheduler_job_failed(self, payload: Any) -> None:
+        self.inc_counter("scheduler_jobs_failed")
+        self.record_audit("scheduler.job.failed", payload)
+
+    async def _on_scheduler_job_cancelled(self, payload: Any) -> None:
+        self.inc_counter("scheduler_jobs_cancelled")
+        self.record_audit("scheduler.job.cancelled", payload)
+
+    async def _on_scheduler_job_retried(self, payload: Any) -> None:
+        self.inc_counter("scheduler_job_retries")
+        self.record_audit("scheduler.job.retried", payload)
+
+    async def _on_recovery_started(self, payload: Any) -> None:
+        self.inc_counter("recoveries_started")
+        self.record_audit("recovery.started", payload)
+
+    async def _on_recovery_completed(self, payload: Any) -> None:
+        self.inc_counter("recoveries_completed")
+        if isinstance(payload, dict):
+            duration_ms = payload.get("duration_ms", 0)
+            self.observe("recovery_duration_ms", float(duration_ms))
+        self.record_audit("recovery.completed", payload)
+
+    async def _on_checkpoint_saved(self, payload: Any) -> None:
+        self.inc_counter("checkpoints_saved")
+        self.record_audit("checkpoint.saved", payload)
+
+    async def _on_checkpoint_restored(self, payload: Any) -> None:
+        self.inc_counter("checkpoints_restored")
+        self.record_audit("checkpoint.restored", payload)
+
+    # ------------------------------------------------------------------
+    # Sprint 1.8 — Advanced tracking by entity
+    # ------------------------------------------------------------------
+
+    def task_summary(self, task_id: str) -> dict[str, Any]:
+        """Return all metrics events related to a specific task.
+
+        Searches the audit trail for entries containing the task_id.
+
+        Returns:
+            Dict with event counts and details for the task.
+        """
+        with self._lock:
+            task_events = [
+                e for e in self._audit
+                if isinstance(e.get("payload"), dict)
+                and e["payload"].get("task_id") == task_id
+            ]
+        return {
+            "task_id": task_id,
+            "event_count": len(task_events),
+            "events": [
+                {"type": e["event_type"], "ts": e["ts"]}
+                for e in task_events
+            ],
+        }
+
+    def workflow_summary(self, workflow_id: str) -> dict[str, Any]:
+        """Return all metrics events related to a specific workflow.
+
+        Returns:
+            Dict with event counts and details for the workflow.
+        """
+        with self._lock:
+            wf_events = [
+                e for e in self._audit
+                if isinstance(e.get("payload"), dict)
+                and e["payload"].get("workflow_id") == workflow_id
+            ]
+        return {
+            "workflow_id": workflow_id,
+            "event_count": len(wf_events),
+            "events": [
+                {"type": e["event_type"], "ts": e["ts"]}
+                for e in wf_events
+            ],
+        }
+
+    def agent_summary(self, agent_name: str) -> dict[str, Any]:
+        """Return metrics summary for a specific agent.
+
+        Returns:
+            Dict with invocation/completion/failure counts and
+            duration stats for the agent.
+        """
+        with self._lock:
+            invocations = self._counters.get(f"agent_invocations.{agent_name}", Counter()).value
+            completions = self._counters.get("agent_completions", Counter()).value
+            failures = self._counters.get("agent_failures", Counter()).value
+            duration = self._histograms.get(
+                f"agent_duration_ms.{agent_name}", Histogram()
+            )
+        return {
+            "agent_name": agent_name,
+            "invocations": invocations,
+            "completions_total": completions,
+            "failures_total": failures,
+            "duration_ms": duration.to_dict(),
+        }
+
+    def dashboard_snapshot(self) -> dict[str, Any]:
+        """Return a comprehensive snapshot for an internal metrics dashboard.
+
+        Includes:
+            - System-level counters.
+            - Per-agent summaries.
+            - Per-tool summaries.
+            - Task/workflow state distribution.
+            - Recent errors.
+        """
+        with self._lock:
+            counters = {k: v.value for k, v in self._counters.items()}
+            histograms = {k: v.to_dict() for k, v in self._histograms.items()}
+
+        # Recent errors (last 20 error events).
+        recent_errors = []
+        with self._lock:
+            for e in reversed(self._audit):
+                if "fail" in e["event_type"] or "error" in e["event_type"]:
+                    recent_errors.append({
+                        "event": e["event_type"],
+                        "ts": e["ts"],
+                        "payload": e["payload"],
+                    })
+                    if len(recent_errors) >= 20:
+                        break
+
+        # Agent summaries.
+        agent_names = set()
+        with self._lock:
+            for k in self._counters:
+                if k.startswith("agent_invocations.") and k != "agent_invocations":
+                    agent_names.add(k.split(".", 1)[1])
+
+        agents = {name: self.agent_summary(name) for name in agent_names}
+
+        # Tool summaries.
+        tool_names = set()
+        with self._lock:
+            for k in self._counters:
+                if k.startswith("tool_executions.") and k != "tool_executions":
+                    tool_names.add(k.split(".", 1)[1])
+
+        tools = {}
+        for name in tool_names:
+            with self._lock:
+                execs = self._counters.get(f"tool_executions.{name}", Counter()).value
+                fails = self._counters.get(f"tool_failures.{name}", Counter()).value
+                dur = self._histograms.get(
+                    f"tool_duration_ms.{name}", Histogram()
+                )
+            tools[name] = {
+                "executions": execs,
+                "failures": fails,
+                "duration_ms": dur.to_dict(),
+            }
+
+        return {
+            "counters": counters,
+            "histograms": histograms,
+            "agents": agents,
+            "tools": tools,
+            "recent_errors": recent_errors,
+            "audit_count": len(self._audit),
+            "generated_at": time.time(),
+        }
+
+    # ------------------------------------------------------------------
+    # Sprint 1.8 — Metrics exporters
+    # ------------------------------------------------------------------
+
+    def export_json(self) -> str:
+        """Export all metrics as a JSON string.
+
+        Suitable for file-based export, API endpoints, or debugging.
+        """
+        snap = self.snapshot()
+        return json.dumps(snap, indent=2, default=str)
+
+    def export_prometheus(self) -> str:
+        """Export metrics in Prometheus text exposition format.
+
+        Returns a string suitable for a /metrics HTTP endpoint.
+
+        Note: This is a basic exporter. For production use with
+        labels and proper typing, consider integrating
+        ``prometheus_client`` in a future sprint.
+        """
+        lines: list[str] = []
+        lines.append("# HELP liz_tasks_total Total task lifecycle events")
+        lines.append("# TYPE liz_tasks_total counter")
+        with self._lock:
+            for name, counter in self._counters.items():
+                safe_name = name.replace(".", "_")
+                lines.append(f"liz_{safe_name} {counter.value}")
+
+            lines.append("")
+            lines.append("# HELP liz_duration_ms Operation durations")
+            lines.append("# TYPE liz_duration_ms summary")
+            for name, hist in self._histograms.items():
+                safe_name = name.replace(".", "_")
+                lines.append(
+                    f'liz_{safe_name}_avg {hist.avg:.2f}'
+                )
+                lines.append(
+                    f'liz_{safe_name}_count {hist.count}'
+                )
+                lines.append(
+                    f'liz_{safe_name}_sum {hist.sum:.2f}'
+                )
+
+        return "\n".join(lines) + "\n"
+
+    def reset(self) -> None:
+        """Reset all metrics to zero. Useful for testing."""
+        with self._lock:
+            self._counters.clear()
+            self._histograms.clear()
+            self._audit.clear()
 
 
 # ----------------------------------------------------------------------
