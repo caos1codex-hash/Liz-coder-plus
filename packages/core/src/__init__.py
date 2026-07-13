@@ -7,6 +7,8 @@ from src.events import (  # noqa: F401
     AGENT_FAILED,
     AGENT_INVOKED,
     ASSISTANT_RESPONSE_SENT,
+    CHECKPOINT_RESTORED,
+    CHECKPOINT_SAVED,
     MEMORY_RETRIEVED,
     MEMORY_STORED,
     METRIC_RECORDED,
@@ -15,6 +17,18 @@ from src.events import (  # noqa: F401
     PERMISSION_REVOKED,
     PLANNER_DECISION,
     PLANNER_PLAN_CREATED,
+    RECOVERY_COMPLETED,
+    RECOVERY_STARTED,
+    RECOVERY_TASK_RESUMED,
+    RECOVERY_WORKFLOW_RESUMED,
+    SCHEDULER_JOB_CANCELLED,
+    SCHEDULER_JOB_COMPLETED,
+    SCHEDULER_JOB_FAILED,
+    SCHEDULER_JOB_RETRIED,
+    SCHEDULER_JOB_SCHEDULED,
+    SCHEDULER_JOB_STARTED,
+    SCHEDULER_STARTED,
+    SCHEDULER_STOPPED,
     SYSTEM_STARTED,
     SYSTEM_STOPPED,
     TASK_CANCELLED,
@@ -51,6 +65,7 @@ from src.pipeline import (  # noqa: F401
     PipelineRequest,
 )
 from src.planner import Plan, Planner, SubTask  # noqa: F401
+from src.scheduler import JobState, Scheduler, SchedulerJob, SchedulerRepository  # noqa: F401
 from src.protocols import Agent, Memory, Tool  # noqa: F401
 from src.session_manager import ChatTurn, SessionManager, SessionState  # noqa: F401
 from src.task import Task, TaskManager, TaskPriority, TaskState  # noqa: F401
@@ -67,4 +82,4 @@ from src.workflow import (  # noqa: F401
 from src.ws_connection import WebSocketConnection  # noqa: F401
 from src.ws_manager import WebSocketManager  # noqa: F401
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"

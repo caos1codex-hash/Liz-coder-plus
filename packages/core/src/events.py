@@ -54,6 +54,24 @@ PLANNER_DECISION = "planner.decision"
 # Observability (Sprint 1.7 — Phase 6)
 METRIC_RECORDED = "metric.recorded"
 
+# Scheduler lifecycle (Sprint 1.8 — Phase 3)
+SCHEDULER_JOB_SCHEDULED = "scheduler.job.scheduled"
+SCHEDULER_JOB_STARTED = "scheduler.job.started"
+SCHEDULER_JOB_COMPLETED = "scheduler.job.completed"
+SCHEDULER_JOB_FAILED = "scheduler.job.failed"
+SCHEDULER_JOB_CANCELLED = "scheduler.job.cancelled"
+SCHEDULER_JOB_RETRIED = "scheduler.job.retried"
+SCHEDULER_STARTED = "scheduler.started"
+SCHEDULER_STOPPED = "scheduler.stopped"
+
+# Recovery lifecycle (Sprint 1.8 — Phase 4)
+RECOVERY_STARTED = "recovery.started"
+RECOVERY_COMPLETED = "recovery.completed"
+RECOVERY_TASK_RESUMED = "recovery.task.resumed"
+RECOVERY_WORKFLOW_RESUMED = "recovery.workflow.resumed"
+CHECKPOINT_SAVED = "checkpoint.saved"
+CHECKPOINT_RESTORED = "checkpoint.restored"
+
 # System lifecycle
 SYSTEM_STARTED = "system.started"
 SYSTEM_STOPPED = "system.stopped"
