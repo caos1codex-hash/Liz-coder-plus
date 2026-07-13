@@ -28,6 +28,7 @@ from src.events import (
     TOOL_REQUESTED,
     USER_MESSAGE_RECEIVED,
 )
+from src.pipeline import ExecutionPipeline
 from src.protocols import Agent, Tool
 from src.session_manager import SessionManager
 from src.tool_executor import ToolExecutor
@@ -81,10 +82,14 @@ class Orchestrator:
         self._tools: dict[str, Tool] = {}
         self._memory: MemoryManager | None = None
         self._agent_timeout = agent_timeout
+        self._planner: Any | None = None  # Sprint 1.7 — Phase 5
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
         self._agents[default.name] = default
+
+        # Sprint 1.7 — Phase 2: unified execution pipeline.
+        self._pipeline = ExecutionPipeline(self)
 
         self._initialized = False
         self._shutdown = False
@@ -127,6 +132,25 @@ class Orchestrator:
     def agent_timeout(self) -> float:
         """Timeout in seconds for agent execution."""
         return self._agent_timeout
+
+    @property
+    def pipeline(self) -> ExecutionPipeline:
+        """The unified execution pipeline (Sprint 1.7)."""
+        return self._pipeline
+
+    @property
+    def planner(self) -> Any | None:
+        """Optional planner attached in Sprint 1.7 — Phase 5."""
+        return self._planner
+
+    def attach_planner(self, planner: Any) -> None:
+        """Attach a planner instance.
+
+        The planner must expose an async ``plan(message, context)``
+        method that returns a list of sub-task descriptors.
+        """
+        self._planner = planner
+        logger.info("Planner attached to Orchestrator")
 
     # ------------------------------------------------------------------
     # Registration
@@ -300,15 +324,15 @@ class Orchestrator:
     ) -> dict[str, Any]:
         """Handle an incoming user message.
 
-        Flow:
-            1. Emit user.message.received event.
-            2. Persist user state and the inbound turn.
-            3. Build context from session history.
-            4. Route to agent (emit agent.invoked).
-            5. Execute agent with timeout.
-            6. Emit agent.completed or agent.failed.
-            7. Record assistant turn.
-            8. Return response envelope.
+        Sprint 1.7 — Phase 2: this method now delegates to the
+        unified ``ExecutionPipeline``. The pipeline runs the same
+        sequence of stages that were previously inline (validate,
+        build context, retrieve memory, plan, select agent, execute,
+        update memory, publish events, respond).
+
+        The response envelope shape is preserved for backwards
+        compatibility. Stage timings are exposed via the
+        ``stage_timings`` key for observability consumers.
 
         Args:
             message:    Raw user input.
@@ -317,161 +341,15 @@ class Orchestrator:
 
         Returns:
             A dict with keys: type, content, status, session_id,
-            message_id, agent_name, duration_ms.
+            message_id, agent_name, duration_ms, stage_timings.
         """
         logger.info(
             "Orchestrator.handle_message session=%s mode=%s len=%d",
             session_id,
             mode,
-            len(message),
+            len(message) if isinstance(message, str) else -1,
         )
-
-        # Emit user message received event.
-        await self._emit(USER_MESSAGE_RECEIVED, {
-            "session_id": session_id,
-            "message_length": len(message),
-            "mode": mode,
-        })
-
-        # Persist user state and the inbound turn.
-        self._sessions.set_mode(session_id, mode)
-        await self._sessions.append_turn(
-            session_id, role="user", content=message, metadata={"mode": mode}
-        )
-
-        context = self._build_context(session_id)
-
-        try:
-            agent = await self._router.route(message, context)
-            agent_name = agent.name
-
-            # Emit agent.invoked event.
-            await self._emit(AGENT_INVOKED, {
-                "agent_name": agent_name,
-                "session_id": session_id,
-                "message_length": len(message),
-            })
-
-            # Execute with timeout to prevent indefinite blocking.
-            start = time.monotonic()
-            response_text = await asyncio.wait_for(
-                agent.handle(message, context),
-                timeout=self._agent_timeout,
-            )
-            duration_ms = int((time.monotonic() - start) * 1000)
-
-            # Emit agent.completed event.
-            await self._emit(AGENT_COMPLETED, {
-                "agent_name": agent_name,
-                "session_id": session_id,
-                "duration_ms": duration_ms,
-                "response_length": len(response_text),
-            })
-
-            logger.info(
-                "Agent '%s' completed in %dms for session %s",
-                agent_name,
-                duration_ms,
-                session_id,
-            )
-
-        except asyncio.TimeoutError:
-            logger.error(
-                "Agent timed out after %.1fs for session %s",
-                self._agent_timeout,
-                session_id,
-            )
-
-            await self._emit(AGENT_FAILED, {
-                "agent_name": "unknown",
-                "session_id": session_id,
-                "error": "timeout",
-                "duration_ms": int(self._agent_timeout * 1000),
-            })
-
-            await self._sessions.append_turn(
-                session_id,
-                role="system",
-                content=f"timeout: agent exceeded {self._agent_timeout}s",
-                metadata={"agent": "timeout", "error_type": "timeout"},
-            )
-            return {
-                "type": "error",
-                "content": (
-                    f"Lo siento, el agente tardó demasiado en responder "
-                    f"(límite: {self._agent_timeout}s)."
-                ),
-                "status": "failed",
-                "session_id": session_id,
-                "error": "agent_timeout",
-                "duration_ms": int(self._agent_timeout * 1000),
-            }
-        except (ValueError, TypeError) as exc:
-            # Validation / type errors from the agent.
-            logger.warning("Agent validation error: %s", exc)
-
-            await self._emit(AGENT_FAILED, {
-                "agent_name": "unknown",
-                "session_id": session_id,
-                "error_type": "validation",
-                "error": str(exc),
-            })
-
-            await self._sessions.append_turn(
-                session_id,
-                role="system",
-                content=f"validation_error: {exc}",
-                metadata={"agent": "error", "error_type": "validation"},
-            )
-            return {
-                "type": "error",
-                "content": "El mensaje no pudo ser procesado correctamente.",
-                "status": "failed",
-                "session_id": session_id,
-                "error": str(exc),
-            }
-        except Exception as exc:  # noqa: BLE001
-            # Unexpected errors from agents or routing.
-            logger.exception("Agent failed to handle message")
-
-            await self._emit(AGENT_FAILED, {
-                "agent_name": "unknown",
-                "session_id": session_id,
-                "error_type": "unexpected",
-                "error": str(exc),
-            })
-
-            await self._sessions.append_turn(
-                session_id,
-                role="system",
-                content=f"error: {exc}",
-                metadata={"agent": "error", "error_type": "unexpected"},
-            )
-            return {
-                "type": "error",
-                "content": "Lo siento, ocurrió un error al procesar tu mensaje.",
-                "status": "failed",
-                "session_id": session_id,
-                "error": str(exc),
-            }
-
-        # Record the assistant turn (persisted to SQLite if memory attached).
-        await self._sessions.append_turn(
-            session_id,
-            role="assistant",
-            content=response_text,
-            metadata={"agent": agent_name},
-        )
-
-        return {
-            "type": "message",
-            "content": response_text,
-            "status": "completed",
-            "session_id": session_id,
-            "message_id": f"{session_id}:{len(self._sessions.history(session_id))}",
-            "agent_name": agent_name,
-            "duration_ms": duration_ms,
-        }
+        return await self._pipeline.run_safe(message, session_id, mode=mode)
 
     async def execute_tool(
         self,

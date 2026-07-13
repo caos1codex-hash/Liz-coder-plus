@@ -22,10 +22,16 @@ from src.events import (  # noqa: F401
     USER_MESSAGE_RECEIVED,
 )
 from src.orchestrator import Orchestrator  # noqa: F401
+from src.pipeline import (  # noqa: F401
+    DEFAULT_STAGES,
+    ExecutionPipeline,
+    PipelineError,
+    PipelineRequest,
+)
 from src.protocols import Agent, Memory, Tool  # noqa: F401
 from src.session_manager import ChatTurn, SessionManager, SessionState  # noqa: F401
 from src.tool_executor import ToolExecutionResult, ToolExecutor  # noqa: F401
 from src.ws_connection import WebSocketConnection  # noqa: F401
 from src.ws_manager import WebSocketManager  # noqa: F401
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
