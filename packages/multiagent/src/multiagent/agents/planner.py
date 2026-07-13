@@ -1,4 +1,4 @@
-"""PlannerAgent — divide tareas en subtareas y prioriza (Sprint 2.1).
+"""PlannerAgent — divide tareas en subtareas y prioriza (Sprint 2.1 + 2.2).
 
 Responsable de:
 
@@ -6,10 +6,15 @@ Responsable de:
 - crear subtareas
 - estimar dificultad
 - priorizar ejecución
+- **(Sprint 2.2)** crear workflows completos con DAG
+- **(Sprint 2.2)** estimar tiempo y costo (tokens)
 
 Estrategia: heurística basada en el contenido del payload. Si el
 payload trae `text` o `request`, se inspecciona para detectar
 patrones (file ops, terminal, research, etc.) y producir un plan.
+
+Sprint 2.2: con `payload['op'] = 'plan_workflow'`, el agente genera
+un `Workflow` completo con DAG, dependencias y estimaciones.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from typing import Any
 
 from ..base import BaseAgent
 from ..enums import Permission, Priority
+from ..workflow.planner_ext import plan_workflow
 
 
 _PATTERNS: list[tuple[str, list[str], list[str]]] = [
@@ -48,24 +54,62 @@ class PlannerAgent(BaseAgent):
     Recibe una tarea con `payload['request']` o `payload['text']` y
     devuelve un plan en `result['plan']` con una lista de subtareas,
     cada una con `name`, `description`, `priority` y `difficulty`.
+
+    Sprint 2.2: con `payload['op'] = 'plan_workflow'`, devuelve además
+    un `Workflow` completo con DAG y estimaciones en `result['workflow']`.
     """
 
     default_permissions = frozenset({Permission.MEMORY_READ, Permission.MEMORY_WRITE})
-    default_objectives = ["plan", "decompose", "estimate", "prioritize"]
+    default_objectives = ["plan", "decompose", "estimate", "prioritize", "workflow"]
     default_tools = ["planner"]
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(name="planner", description="Divide tasks into subtasks and prioritizes", **kwargs)
+        super().__init__(name="planner", description="Divides tasks into subtasks, builds workflows with DAG, estimates time and cost", **kwargs)
 
     async def _execute_impl(self, task: dict[str, Any]) -> dict[str, Any]:
+        payload = task.get("payload", {}) or {}
+        op = (payload.get("op") or "plan").lower()
         request = (
-            task.get("payload", {}).get("request")
-            or task.get("payload", {}).get("text")
+            payload.get("request")
+            or payload.get("text")
             or task.get("name")
             or ""
         )
+
+        # Sprint 2.2: generar workflow completo.
+        if op == "plan_workflow":
+            priority_str = payload.get("priority", "normal")
+            try:
+                priority = Priority(priority_str)
+            except ValueError:
+                priority = Priority.NORMAL
+            wf, plan_meta = plan_workflow(str(request), priority=priority)
+            # Persistir.
+            self._memory.store(
+                key=f"workflow_plan:{task.get('id', 'unknown')}",
+                value={
+                    "workflow_id": wf.id,
+                    "workflow_name": wf.name,
+                    "plan": plan_meta,
+                    "steps": [s.to_dict() for s in wf.steps.values()],
+                },
+                tags=["workflow_plan", plan_meta["strategy"]],
+            )
+            return {
+                "op": "plan_workflow",
+                "workflow": wf.to_dict(),
+                "plan": plan_meta,
+                "request": request,
+                "tools_used": ["planner", "dag_builder"],
+                "tokens_prompt": max(1, len(request) // 4),
+                "tokens_completion": max(
+                    1,
+                    sum(len(s.name) for s in wf.steps.values()) // 4 + 50,
+                ),
+            }
+
+        # Sprint 2.1: plan simple (sin workflow).
         plan = self._build_plan(str(request))
-        # Persistir en memoria larga para consulta futura.
         self._memory.store(
             key=f"plan:{task.get('id', 'unknown')}",
             value=plan,
