@@ -65,6 +65,12 @@ from src.pipeline import (  # noqa: F401
     PipelineRequest,
 )
 from src.planner import Plan, Planner, SubTask  # noqa: F401
+from src.recovery import (  # noqa: F401
+    Checkpoint,
+    CheckpointManager,
+    RecoveryManager,
+    ResilienceHelper,
+)
 from src.scheduler import JobState, Scheduler, SchedulerJob, SchedulerRepository  # noqa: F401
 from src.protocols import Agent, Memory, Tool  # noqa: F401
 from src.session_manager import ChatTurn, SessionManager, SessionState  # noqa: F401
