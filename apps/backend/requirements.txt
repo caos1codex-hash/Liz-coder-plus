@@ -1,0 +1,20 @@
+# ============================================================
+# Liz Coder Plus - Backend
+# Python dependencies for FastAPI + WebSocket
+# Sprint 1 - Prompt 1 (Foundation)
+# ============================================================
+
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+websockets==12.0
+pydantic==2.7.4
+pydantic-settings==2.3.4
+python-dotenv==1.0.1
+SQLAlchemy==2.0.30
+aiosqlite==0.20.0
+httpx==0.27.0
+pytest==8.2.2
+pytest-asyncio==0.23.7
+pytest-cov==5.0.0
+mypy==1.10.0
+ruff==0.4.9

@@ -1,0 +1,209 @@
+# ============================================================
+# Liz Coder Plus — .gitignore
+# Sprint 1 - Prompt 1
+# ============================================================
+
+# ---------- Operating System ----------
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ---------- IDE / Editors ----------
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.userosscache
+*.sln.docstates
+*.user
+*.rsuser
+
+# JetBrains
+.idea/
+
+# ---------- .NET / Desktop App ----------
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+*.dll
+*.exe
+*.pdb
+*.cache
+*.log
+*.tlog
+*.binlog
+*.lastbuildstate
+*.unsuccessfulbuild
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nuget.props
+*.nuget.targets
+app.publish/
+*.publishproj
+*.publishsettings
+PublishProfiles/
+BundleArtifacts/
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.pch
+*.ipdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmproj
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# ---------- Python / Backend ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.eggs/
+*.egg-info/
+.eggs
+*.egg
+dist/
+build/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+local_settings.py
+instance/
+.webassets-cache
+.scrapy
+
+# ---------- Databases ----------
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlight
+
+# ---------- Secrets / Environment ----------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+secrets.json
+config/secrets.json
+
+# ---------- Logs ----------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- Build / Dist ----------
+[Tt]emp/
+[Tt]emporary/
+dist/
+publish/
+release/
+*.apk
+*.aab
+*.ipa
+
+# ---------- Node (if used in tooling) ----------
+node_modules/
+.npm
+.yarn-integrity
+
+# ---------- Jupyter ----------
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ---------- PyInstaller ----------
+*.manifest
+*.spec
+
+# ---------- Type checkers ----------
+.mypy_cache/
+.pyre/
+
+# ---------- Test results ----------
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResults/
+coverage/
+coverage*.json
+coverage*.xml
+coverage*.info

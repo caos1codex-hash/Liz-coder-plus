@@ -1,0 +1,45 @@
+{
+  "version": "0.1.1",
+  "environment": "production",
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "temperature": 0.5,
+    "max_tokens": 8192,
+    "api_key_env": "LIZ_AI_API_KEY"
+  },
+  "permissions": {
+    "mode": "Confirmation",
+    "allowed_commands": [
+      "git status",
+      "git log"
+    ],
+    "denied_commands": [
+      "rm -rf",
+      "format",
+      "del /f /s /q",
+      "shutdown",
+      "taskkill /f",
+      "reg delete",
+      "reg add"
+    ]
+  },
+  "logging": {
+    "level": "INFO",
+    "to_file": true,
+    "file_path": "logs/production.log"
+  },
+  "backend": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "reload": false,
+    "cors_origins": [
+      "https://lizcoderplus.local"
+    ]
+  },
+  "memory": {
+    "backend": "sqlite",
+    "database_url": "sqlite+aiosqlite:///./lizcoderplus.db",
+    "short_term_ttl_minutes": 30
+  }
+}

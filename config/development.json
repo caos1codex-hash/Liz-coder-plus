@@ -1,0 +1,51 @@
+{
+  "version": "0.1.1",
+  "environment": "development",
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "api_key_env": "LIZ_AI_API_KEY"
+  },
+  "permissions": {
+    "mode": "Confirmation",
+    "allowed_commands": [
+      "git status",
+      "git log",
+      "dir",
+      "ls",
+      "echo",
+      "pwd",
+      "whoami",
+      "date",
+      "python --version"
+    ],
+    "denied_commands": [
+      "rm -rf",
+      "format",
+      "del /f /s /q",
+      "shutdown",
+      "taskkill /f"
+    ]
+  },
+  "logging": {
+    "level": "DEBUG",
+    "to_file": true,
+    "file_path": "logs/development.log"
+  },
+  "backend": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "reload": true,
+    "cors_origins": [
+      "http://localhost:3000",
+      "http://localhost:5173"
+    ]
+  },
+  "memory": {
+    "backend": "sqlite",
+    "database_url": "sqlite+aiosqlite:///./lizcoderplus_dev.db",
+    "short_term_ttl_minutes": 60
+  }
+}
