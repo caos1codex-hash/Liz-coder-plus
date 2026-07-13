@@ -179,7 +179,6 @@ class ReviewerAgent(BaseAgent):
             m = fn_pattern.match(line)
             if not m:
                 continue
-            indent = len(m.group(1))
             name = m.group(2)
             if name.startswith("_"):
                 continue

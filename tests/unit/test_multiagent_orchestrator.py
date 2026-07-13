@@ -19,10 +19,8 @@ from multiagent.base import BaseAgent  # noqa: E402
 from multiagent.config import MultiAgentConfig  # noqa: E402
 from multiagent.enums import (  # noqa: E402
     AgentStatus,
-    HealthState,
     MessageType,
     Permission,
-    Priority,
 )
 from multiagent.orchestrator import AgentOrchestrator  # noqa: E402
 

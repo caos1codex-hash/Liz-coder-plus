@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
 from .base import BaseAgent, HealthReport
@@ -34,9 +33,7 @@ from .enums import (
     AgentStatus,
     HealthState,
     MessageType,
-    Permission,
     Priority,
-    TaskStatus,
 )
 from .logs import AgentLogger
 from .messages import Message, MessageBus

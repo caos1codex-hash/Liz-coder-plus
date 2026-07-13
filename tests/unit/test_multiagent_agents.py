@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -336,6 +335,71 @@ async def test_git_unknown_op() -> None:
     })
     assert r["status"] == "ok"
     assert "unknown op" in r["result"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_branch_op(tmp_path: Path) -> None:
+    """Cubre branch/checkout/diff/pull/merge ops (al menos las ramas válidas)."""
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "a.txt").write_text("a")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "i"], cwd=tmp_path, check=True, capture_output=True)
+
+    a = GitAgent(repo_path=str(tmp_path))
+    await a.start()
+    # diff (no changes)
+    r = await a.execute({"id": "t1", "name": "git", "payload": {"op": "diff"}})
+    assert r["status"] == "ok"
+    # branch + checkout
+    r = await a.execute({"id": "t2", "name": "git", "payload": {"op": "branch", "name": "feature/x"}})
+    assert r["status"] == "ok"
+    r = await a.execute({"id": "t3", "name": "git", "payload": {"op": "checkout", "name": "feature/x"}})
+    assert r["status"] == "ok"
+    # merge back (should be no-op)
+    r = await a.execute({"id": "t4", "name": "git", "payload": {"op": "checkout", "name": "master"}})
+    assert r["status"] == "ok"
+    r = await a.execute({"id": "t5", "name": "git", "payload": {"op": "merge", "name": "feature/x"}})
+    assert r["status"] == "ok"
+    # add + commit
+    (tmp_path / "b.txt").write_text("b")
+    r = await a.execute({"id": "t6", "name": "git", "payload": {"op": "add", "paths": ["."]}})
+    assert r["status"] == "ok"
+    r = await a.execute({"id": "t7", "name": "git", "payload": {"op": "commit", "message": "second"}})
+    assert r["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_requires_name() -> None:
+    a = GitAgent(repo_path=".")
+    await a.start()
+    r = await a.execute({"id": "t1", "name": "git", "payload": {"op": "branch"}})
+    assert r["status"] == "ok"
+    assert "branch name required" in r["result"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_git_push_force_requires_unrestricted(tmp_path: Path) -> None:
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "x.txt").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "x"], cwd=tmp_path, check=True, capture_output=True)
+
+    # Sin UNRESTRICTED, force push debe ser rechazado.
+    a = GitAgent(repo_path=str(tmp_path))
+    await a.start()
+    r = await a.execute({
+        "id": "t1",
+        "name": "git",
+        "payload": {"op": "push", "force": True, "remote": "origin"},
+    })
+    assert r["status"] == "ok"
+    assert "force push requires UNRESTRICTED" in r["result"]["error"]
 
 
 @pytest.mark.asyncio

@@ -303,7 +303,6 @@ def test_memory_long_store_retrieve() -> None:
 @pytest.mark.asyncio
 async def test_on_message_default_stores_in_short_memory() -> None:
     from multiagent.messages import Message
-    from multiagent.enums import MessageType
 
     a = EchoAgent()
     msg = Message.request("orchestrator", "echo", {"hello": "world"})

@@ -19,7 +19,6 @@ from typing import Any
 
 from ..base import BaseAgent
 from ..enums import Permission, Priority
-from ..queue import Task
 
 
 _PATTERNS: list[tuple[str, list[str], list[str]]] = [
