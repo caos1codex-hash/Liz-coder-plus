@@ -4,11 +4,15 @@ Decides which registered agent should handle a given user message.
 Sprint 1 ships a simple keyword-based router plus a default fallback
 agent that echoes a friendly Spanish greeting. Sprint 2 will swap in
 a smarter routing strategy (intent classification via the LLM).
+
+Agents are validated against the ``Agent`` Protocol at registration
+time to prevent runtime AttributeError.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Awaitable, Callable
 
 from src.protocols import Agent
@@ -24,16 +28,38 @@ class EchoAgent:
 
     Used until real agents land in Sprint 2. It produces a friendly
     Spanish acknowledgement so the end-to-end pipeline can be demoed.
-    The agent implements the `Agent` protocol from `orchestrator.py`.
+    The agent implements the ``Agent`` protocol.
+
+    This agent uses the context to personalize the response, serving
+    as a reference implementation for future agent developers.
     """
 
     name = "echo"
+    description = "Default fallback agent that acknowledges messages"
+    version = "0.1.0"
+    capabilities = ["greeting", "echo"]
 
     async def handle(self, message: str, context: dict[str, Any]) -> str:
         session_id = context.get("session_id", "unknown")
-        logger.debug("EchoAgent handling message for session %s", session_id)
-        # Friendly Spanish acknowledgement - matches the user-facing
-        # language requirement (UI/docs in Spanish, code in English).
+        language = context.get("user_language", "es")
+        mode = context.get("mode", "confirmation")
+
+        logger.debug(
+            "EchoAgent handling message for session %s (lang=%s, mode=%s)",
+            session_id,
+            language,
+            mode,
+        )
+
+        history_count = len(context.get("history", []))
+
+        if history_count > 0:
+            return (
+                f"Hola, soy Liz. Recibí tu mensaje: «{message}». "
+                f"Vamos {history_count} intercambios en esta conversación. "
+                f"Modo actual: {mode}."
+            )
+
         return f"Hola, soy Liz. Recibí tu mensaje: «{message}»"
 
 
@@ -44,7 +70,7 @@ class AgentRouter:
       1. Iterate registered rules in order; first match wins.
       2. If no rule matches, fall back to the default agent.
 
-    A "rule" is a tuple `(agent_name, predicate)`. Predicates are
+    A "rule" is a tuple ``(agent_name, predicate)``. Predicates are
     async callables so they can consult memory or external state
     before deciding.
     """
@@ -62,7 +88,19 @@ class AgentRouter:
     # ------------------------------------------------------------------
 
     def register_agent(self, agent: Agent) -> None:
-        """Register an agent so it can be referenced by routing rules."""
+        """Register an agent after protocol validation.
+
+        Args:
+            agent: Must satisfy the Agent protocol (name + async handle).
+
+        Raises:
+            TypeError: If the agent does not satisfy the Agent protocol.
+        """
+        if not isinstance(agent, Agent):
+            raise TypeError(
+                f"Object {agent!r} does not satisfy the Agent protocol "
+                f"(needs 'name: str' and 'async handle(message, context) -> str')"
+            )
         self._agents[agent.name] = agent
         logger.debug("Registered agent '%s' with router", agent.name)
 
@@ -73,6 +111,9 @@ class AgentRouter:
             agent_name: Name of the agent to dispatch to when the
                 predicate returns True.
             predicate: Async callable (message, context) -> bool.
+
+        Raises:
+            KeyError: If agent_name is not registered.
         """
         if agent_name not in self._agents:
             raise KeyError(
@@ -96,17 +137,28 @@ class AgentRouter:
         Returns:
             The selected Agent instance.
         """
+        start = time.monotonic()
         for agent_name, predicate in self._rules:
             try:
                 if await predicate(message, context):
-                    logger.debug("Message routed to '%s' by rule", agent_name)
+                    elapsed = (time.monotonic() - start) * 1000
+                    logger.debug(
+                        "Message routed to '%s' by rule (%.1fms)",
+                        agent_name,
+                        elapsed,
+                    )
                     return self._agents[agent_name]
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Routing predicate for '%s' raised; skipping", agent_name
                 )
 
-        logger.debug("Message routed to default agent '%s'", self._default.name)
+        elapsed = (time.monotonic() - start) * 1000
+        logger.debug(
+            "Message routed to default agent '%s' (%.1fms)",
+            self._default.name,
+            elapsed,
+        )
         return self._default
 
     def get_agent(self, name: str) -> Agent | None:
@@ -122,3 +174,6 @@ class AgentRouter:
     def agent_names(self) -> list[str]:
         """List names of all registered agents."""
         return list(self._agents.keys())
+
+    def __len__(self) -> int:
+        return len(self._agents)

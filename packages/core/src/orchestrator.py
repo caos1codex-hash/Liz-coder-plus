@@ -6,12 +6,13 @@ AgentRouter), coordinates session/memory access, dispatches tools, and
 emits events.
 
 Sprint 1 - Prompt 3: connected to the persistent memory system.
-When a MemoryManager is provided, every user and assistant message
-is persisted to SQLite via the SessionManager.
+Sprint 1.5: agent validation, execution timeout, improved error handling,
+and lifecycle integration.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for agent execution (seconds).
+DEFAULT_AGENT_TIMEOUT = 30.0
+
 
 class Orchestrator:
     """Central coordinator for agents, memory, sessions and tools.
@@ -34,6 +38,10 @@ class Orchestrator:
       - SessionManager    -> tracks conversation history per session
       - AgentRouter       -> selects an agent per message
       - MemoryManager     -> persists messages to SQLite (optional)
+
+    Agents are validated against the ``Agent`` Protocol at registration.
+    Agent execution is subject to a configurable timeout to prevent
+    indefinite blocking.
     """
 
     def __init__(
@@ -42,6 +50,7 @@ class Orchestrator:
         ws_manager: WebSocketManager | None = None,
         session_manager: SessionManager | None = None,
         router: AgentRouter | None = None,
+        agent_timeout: float = DEFAULT_AGENT_TIMEOUT,
     ) -> None:
         self._ws_manager = ws_manager or WebSocketManager()
         self._sessions = session_manager or SessionManager()
@@ -49,16 +58,18 @@ class Orchestrator:
         self._agents: dict[str, Agent] = {}
         self._tools: dict[str, Tool] = {}
         self._memory: MemoryManager | None = None
+        self._agent_timeout = agent_timeout
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
         self._agents[default.name] = default
 
         logger.info(
-            "Orchestrator initialized (ws=%d sessions=%d agents=%d)",
+            "Orchestrator initialized (ws=%d sessions=%d agents=%d timeout=%.1fs)",
             self._ws_manager.connection_count,
             self._sessions.session_count,
             len(self._agents),
+            self._agent_timeout,
         )
 
     # ------------------------------------------------------------------
@@ -77,18 +88,47 @@ class Orchestrator:
     def router(self) -> AgentRouter:
         return self._router
 
+    @property
+    def agent_timeout(self) -> float:
+        """Timeout in seconds for agent execution."""
+        return self._agent_timeout
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
 
     def register_agent(self, agent: Agent) -> None:
-        """Register an agent with both the orchestrator and the router."""
+        """Register an agent with both the orchestrator and the router.
+
+        Args:
+            agent: Must satisfy the Agent protocol (name + async handle).
+
+        Raises:
+            TypeError: If the agent does not satisfy the Agent protocol.
+        """
+        if not isinstance(agent, Agent):
+            raise TypeError(
+                f"Object {agent!r} does not satisfy the Agent protocol "
+                f"(needs 'name: str' and 'async handle(message, context) -> str')"
+            )
         self._agents[agent.name] = agent
         self._router.register_agent(agent)
         logger.debug("Registered agent '%s'", agent.name)
 
     def register_tool(self, tool: Tool) -> None:
-        """Register a tool with the orchestrator."""
+        """Register a tool with the orchestrator.
+
+        Args:
+            tool: Must satisfy the Tool protocol (name + async execute).
+
+        Raises:
+            TypeError: If the tool does not satisfy the Tool protocol.
+        """
+        if not isinstance(tool, Tool):
+            raise TypeError(
+                f"Object {tool!r} does not satisfy the Tool protocol "
+                f"(needs 'name: str' and 'async execute(params) -> dict')"
+            )
         self._tools[tool.name] = tool
         logger.debug("Registered tool '%s'", tool.name)
 
@@ -122,10 +162,11 @@ class Orchestrator:
             1. Persist user state and the inbound turn.
             2. Build context from session history.
             3. Route to agent.
-            4. Record assistant turn.
-            5. Return response envelope.
+            4. Execute agent with timeout.
+            5. Record assistant turn.
+            6. Return response envelope.
 
-        When a MemoryManager is attached, steps 1 and 4 also persist
+        When a MemoryManager is attached, steps 1 and 5 also persist
         to SQLite via the SessionManager.
 
         Args:
@@ -134,7 +175,8 @@ class Orchestrator:
             mode:       Permission mode requested by the client.
 
         Returns:
-            A dict with keys: type, content, status, session_id.
+            A dict with keys: type, content, status, session_id,
+            message_id, agent_name, duration_ms.
         """
         logger.info(
             "Orchestrator.handle_message session=%s mode=%s len=%d",
@@ -153,7 +195,47 @@ class Orchestrator:
 
         try:
             agent = await self._router.route(message, context)
-            response_text = await agent.handle(message, context)
+            agent_name = agent.name
+
+            # Execute with timeout to prevent indefinite blocking.
+            import time
+            start = time.monotonic()
+            response_text = await asyncio.wait_for(
+                agent.handle(message, context),
+                timeout=self._agent_timeout,
+            )
+            duration_ms = int((time.monotonic() - start) * 1000)
+
+            logger.info(
+                "Agent '%s' completed in %dms for session %s",
+                agent_name,
+                duration_ms,
+                session_id,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "Agent timed out after %.1fs for session %s",
+                self._agent_timeout,
+                session_id,
+            )
+            await self._sessions.append_turn(
+                session_id,
+                role="system",
+                content=f"timeout: agent exceeded {self._agent_timeout}s",
+                metadata={"agent": "timeout", "error_type": "timeout"},
+            )
+            return {
+                "type": "error",
+                "content": (
+                    f"Lo siento, el agente tardó demasiado en responder "
+                    f"(límite: {self._agent_timeout}s)."
+                ),
+                "status": "failed",
+                "session_id": session_id,
+                "error": "agent_timeout",
+                "duration_ms": int(self._agent_timeout * 1000),
+            }
         except (ValueError, TypeError) as exc:
             # Validation / type errors from the agent.
             logger.warning("Agent validation error: %s", exc)
@@ -192,7 +274,7 @@ class Orchestrator:
             session_id,
             role="assistant",
             content=response_text,
-            metadata={"agent": agent.name},
+            metadata={"agent": agent_name},
         )
 
         return {
@@ -201,6 +283,8 @@ class Orchestrator:
             "status": "completed",
             "session_id": session_id,
             "message_id": f"{session_id}:{len(self._sessions.history(session_id))}",
+            "agent_name": agent_name,
+            "duration_ms": duration_ms,
         }
 
     async def stream_message(
@@ -252,6 +336,8 @@ class Orchestrator:
             "status": "completed",
             "session_id": session_id,
             "message_id": result.get("message_id"),
+            "agent_name": result.get("agent_name"),
+            "duration_ms": result.get("duration_ms", 0),
         }
 
     # ------------------------------------------------------------------
