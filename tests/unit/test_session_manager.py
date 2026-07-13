@@ -1,6 +1,6 @@
 """Unit tests for the SessionManager.
 
-Sprint 1 - Prompt 2.
+Sprint 1 - Prompt 2 (original), updated in Prompt 3 for async append_turn/drop.
 """
 
 from __future__ import annotations
@@ -45,10 +45,11 @@ def test_get_or_create_is_idempotent() -> None:
     assert mgr.session_count == 1
 
 
-def test_append_turn_adds_history() -> None:
+@pytest.mark.asyncio
+async def test_append_turn_adds_history() -> None:
     mgr = SessionManager()
-    mgr.append_turn("s1", role="user", content="hola")
-    mgr.append_turn("s1", role="assistant", content="Hola, soy Liz")
+    await mgr.append_turn("s1", role="user", content="hola")
+    await mgr.append_turn("s1", role="assistant", content="Hola, soy Liz")
     history = mgr.history("s1")
     assert len(history) == 2
     assert history[0].role == "user"
@@ -56,21 +57,23 @@ def test_append_turn_adds_history() -> None:
     assert history[1].role == "assistant"
 
 
-def test_history_with_limit_returns_tail() -> None:
+@pytest.mark.asyncio
+async def test_history_with_limit_returns_tail() -> None:
     mgr = SessionManager()
     for i in range(5):
-        mgr.append_turn("s1", role="user", content=f"msg-{i}")
+        await mgr.append_turn("s1", role="user", content=f"msg-{i}")
     tail = mgr.history("s1", limit=2)
     assert len(tail) == 2
     assert tail[0].content == "msg-3"
     assert tail[1].content == "msg-4"
 
 
-def test_history_trims_to_max() -> None:
+@pytest.mark.asyncio
+async def test_history_trims_to_max() -> None:
     mgr = SessionManager()
     mgr.MAX_HISTORY = 5
     for i in range(10):
-        mgr.append_turn("s1", role="user", content=f"msg-{i}")
+        await mgr.append_turn("s1", role="user", content=f"msg-{i}")
     history = mgr.history("s1")
     assert len(history) == 5
     assert history[0].content == "msg-5"
@@ -87,12 +90,13 @@ def test_set_language_and_mode_persist() -> None:
     assert snapshot["last_mode"] == "automatic"
 
 
-def test_drop_removes_session() -> None:
+@pytest.mark.asyncio
+async def test_drop_removes_session() -> None:
     mgr = SessionManager()
     mgr.create_session("s1")
-    assert mgr.drop("s1") is True
+    assert await mgr.drop("s1") is True
     assert mgr.session_count == 0
-    assert mgr.drop("s1") is False  # already gone
+    assert await mgr.drop("s1") is False  # already gone
 
 
 def test_snapshot_returns_none_for_unknown() -> None:
@@ -110,3 +114,9 @@ def test_list_sessions_returns_known_ids() -> None:
     mgr.create_session("a")
     mgr.create_session("b")
     assert set(mgr.list_sessions()) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_has_memory_property() -> None:
+    mgr = SessionManager()
+    assert mgr.has_memory is False

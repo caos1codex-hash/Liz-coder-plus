@@ -7,19 +7,24 @@ Owns the lifetime of a conversation session. A session bundles:
 - Per-session user state (currently: language preference and the
   last permission mode the client requested).
 
-The session store is intentionally in-memory for Sprint 1. Sprint 2
-will plug the persistent memory backend (SQLite) so history survives
-process restarts.
+Sprint 1 - Prompt 3: integrated with MemoryManager for persistent
+storage. When a MemoryManager is attached, every ``append_turn``
+also persists the message to SQLite. On ``restore_session``, the
+RAM cache is populated from the persistent store.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src.events import MEMORY_STORED, MEMORY_RETRIEVED
+from src.events import MEMORY_STORED
+
+if TYPE_CHECKING:
+    from src.memory.manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +74,89 @@ class SessionState:
 class SessionManager:
     """In-memory store of conversation sessions.
 
+    When a ``MemoryManager`` is attached via ``attach_memory``, every
+    turn is also persisted to SQLite. The in-memory RAM cache remains
+    the primary read path for performance.
+
     The manager emits events through the optional EventBus passed in
     the constructor. When no bus is provided (e.g. in unit tests),
     the manager runs silently.
     """
 
     # Maximum turns kept in-memory per session before older ones are
-    # dropped. Real persistence lands in Sprint 2.
+    # dropped.
     MAX_HISTORY = 200
 
     def __init__(self, event_bus: Any | None = None) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._bus = event_bus
+        self._memory: MemoryManager | None = None
+
+    # ------------------------------------------------------------------
+    # Memory integration
+    # ------------------------------------------------------------------
+
+    def attach_memory(self, memory: MemoryManager) -> None:
+        """Attach a persistent memory backend.
+
+        Once attached, ``append_turn`` will also persist messages
+        to SQLite via the MemoryManager.
+
+        Args:
+            memory: An initialized MemoryManager instance.
+        """
+        self._memory = memory
+        logger.info("Persistent memory attached to SessionManager")
+
+    @property
+    def has_memory(self) -> bool:
+        """Whether a persistent memory backend is attached."""
+        return self._memory is not None
+
+    async def restore_session(self, session_id: str) -> SessionState:
+        """Restore a session from persistent memory into RAM.
+
+        Loads the conversation history from SQLite and populates the
+        in-memory cache. If the session already exists in RAM, it is
+        returned as-is (no reload).
+
+        This is the recommended way to resume a session after a
+        process restart.
+
+        Args:
+            session_id: The session to restore.
+
+        Returns:
+            The SessionState with history loaded from persistent storage.
+        """
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+
+        state = SessionState(session_id=session_id)
+
+        # Load history from persistent memory.
+        if self._memory is not None and self._memory.is_initialized:
+            try:
+                messages = await self._memory.get_context(session_id)
+                for msg in messages:
+                    turn = ChatTurn(
+                        role=msg["role"],
+                        content=msg["content"],
+                        metadata=msg.get("metadata", {}),
+                    )
+                    state.history.append(turn)
+                logger.info(
+                    "Session restored from memory: %s (%d turns)",
+                    session_id,
+                    len(state.history),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to restore session %s from memory", session_id
+                )
+
+        self._sessions[session_id] = state
+        return state
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -115,13 +191,24 @@ class SessionManager:
         """Return the session state, or None if unknown."""
         return self._sessions.get(session_id)
 
-    def drop(self, session_id: str) -> bool:
-        """Drop a session from memory.
+    async def drop(self, session_id: str) -> bool:
+        """Drop a session from memory and persistent storage.
 
         Returns:
             True if a session was removed, False if it didn't exist.
         """
         existed = self._sessions.pop(session_id, None) is not None
+
+        # Also clear from persistent memory.
+        if self._memory is not None and self._memory.is_initialized:
+            try:
+                await self._memory.clear_session(session_id)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to clear session %s from persistent memory",
+                    session_id,
+                )
+
         if existed:
             logger.info("Session dropped: %s", session_id)
         return existed
@@ -139,7 +226,7 @@ class SessionManager:
     # History
     # ------------------------------------------------------------------
 
-    def append_turn(
+    async def append_turn(
         self,
         session_id: str,
         role: str,
@@ -151,6 +238,9 @@ class SessionManager:
         If the session doesn't exist yet, it is created on the fly.
         When the history exceeds MAX_HISTORY, the oldest turns are
         dropped.
+
+        If a MemoryManager is attached, the turn is also persisted
+        to SQLite.
 
         Returns:
             The ChatTurn that was appended.
@@ -166,14 +256,26 @@ class SessionManager:
 
         state.touch()
 
+        # Persist to memory backend.
+        if self._memory is not None and self._memory.is_initialized:
+            try:
+                await self._memory.add_message(
+                    session_id, role, content, metadata
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to persist turn for session %s", session_id
+                )
+
         if self._bus is not None:
             try:
                 # Fire-and-forget: bus.publish is awaitable but we are
-                # in a sync context. Schedule it on the running loop.
-                import asyncio
-
+                # in an async context now, so we can use ensure_future.
                 asyncio.ensure_future(
-                    self._bus.publish(MEMORY_STORED, {"session_id": session_id, "turn": turn.__dict__})
+                    self._bus.publish(
+                        MEMORY_STORED,
+                        {"session_id": session_id, "turn": turn.__dict__},
+                    )
                 )
             except RuntimeError:
                 # No running loop; ignore (tests may not have one).
