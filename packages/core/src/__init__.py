@@ -37,6 +37,13 @@ from src.events import (  # noqa: F401
     WORKFLOW_STARTED,
 )
 from src.orchestrator import Orchestrator  # noqa: F401
+from src.observability import (  # noqa: F401
+    AuditRecorder,
+    Counter,
+    Histogram,
+    MetricsCollector,
+    StructuredLogger,
+)
 from src.pipeline import (  # noqa: F401
     DEFAULT_STAGES,
     ExecutionPipeline,
