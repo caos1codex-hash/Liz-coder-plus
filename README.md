@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.2.1`
-**Estado:** Sprint 1.9 — Motor LLM: Providers, Streaming, Contexto y Prompt
+**Versión:** `v0.3.0`
+**Estado:** Sprint 1.10 — Hardening, Optimización, Validación Final y Cierre del Sprint 1
 
 ---
 

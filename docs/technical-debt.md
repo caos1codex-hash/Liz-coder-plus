@@ -1,7 +1,7 @@
 # Deuda Técnica — Liz Coder Plus
 
-> **Fuente:** Informe de Auditoría de Integración Sprint 1.8 + Riesgos Sprint 1.7
-> **Última actualización:** Sprint 1.9
+> **Fuente:** Informe de Auditoría de Integración Sprint 1.8 + Riesgos Sprint 1.7 + Hallazgos Sprint 1.10
+> **Última actualización:** Sprint 1.10
 
 ---
 
@@ -220,8 +220,8 @@
 - **Causa:** Archivo original del Sprint 1 nunca eliminado.
 - **Archivos afectados:** `apps/backend/src/core/orchestrator.py`
 - **Prioridad:** MEDIA
-- **Estado:** pendiente
-- **Sprint previsto:** 2.0
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
 
 ---
 
@@ -231,8 +231,8 @@
 - **Causa:** Diseño original del Sprint 1 reemplazado en Sprint 1.4.
 - **Archivos afectados:** `packages/memory/src/sqlite.py`
 - **Prioridad:** MEDIA
-- **Estado:** pendiente
-- **Sprint previsto:** 2.0
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
 
 ---
 
@@ -313,11 +313,149 @@
 
 ---
 
+## TD-029 — Pipeline `duration_ms` bug (restaba 0)
+
+- **Descripción:** En las rutas de error del pipeline, `duration_ms` retornaba el timestamp absoluto en lugar de la duración (restaba `start_time - 0` en vez de `time.monotonic() - start_time`).
+- **Causa:** Error de copia/pega: la variable de referencia temporal se inicializó en 0.
+- **Archivos afectados:** `packages/core/src/pipeline.py`
+- **Prioridad:** ALTA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-030 — `ToolExecutor.cancel()` podía cancelar tareas no relacionadas
+
+- **Descripción:** El fallback de `cancel()` usaba un patrón que podía cancelar `asyncio.Task` de otras ejecuciones si el ID no se encontraba en `_active_tasks`.
+- **Causa:** Lógica de fallback demasiado agresiva sin verificar pertenencia.
+- **Archivos afectados:** `packages/core/src/tool_executor.py`
+- **Prioridad:** ALTA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-031 — `TerminalTool` patrones peligrosos solo logueados, no bloqueados
+
+- **Descripción:** Los patrones peligrosos de comandos (`rm -rf /`, `mkfs`, `dd if=`, etc.) eran detectados y logueados pero la ejecución continuaba normalmente.
+- **Causa:** La validación fue implementada como advertencia sin mecanismo de bloqueo.
+- **Archivos afectados:** `packages/tools/src/tools/terminal.py`
+- **Prioridad:** ALTA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-032 — Streaming concatenación O(n²) de strings
+
+- **Descripción:** El `StreamingManager` acumulaba contenido de stream con `+=` en cada chunk, resultando en O(n²) para respuestas largas.
+- **Causa:** Uso de concatenación de strings en lugar de `StringIO` o lista + join.
+- **Archivos afectados:** `packages/llm/src/llm/streaming/manager.py`
+- **Prioridad:** MEDIA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-033 — Re-compilación de regex por cada request en Planner
+
+- **Descripción:** El Planner compilaba patrones regex en cada llamada a `plan()`, generando objetos de patrón duplicados innecesariamente.
+- **Causa:** Patrones definidos dentro del método en vez de a nivel de módulo/clase.
+- **Archivos afectados:** `packages/core/src/planner.py`
+- **Prioridad:** MEDIA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-034 — `inspect.signature()` llamado por cada ejecución de herramienta
+
+- **Descripción:** `ToolExecutor` llamaba a `inspect.signature()` en cada ejecución para validar argumentos, cuando la firma no cambia entre ejecuciones.
+- **Causa:** Falta de caché de firmas por instancia de herramienta.
+- **Archivos afectados:** `packages/core/src/tool_executor.py`
+- **Prioridad:** MEDIA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-035 — Parsing de datetime por cada tick del Scheduler
+
+- **Descripción:** El Scheduler parseaba strings ISO a `datetime` en cada tick para comparar fechas de ejecución, en vez de usar comparación lexicográfica directa de strings ISO.
+- **Causa:** Conversión innecesaria de formato ya ordenable.
+- **Archivos afectados:** `packages/core/src/scheduler.py`
+- **Prioridad:** MEDIA
+- **Estado:** resuelto
+- **Sprint previsto:** 1.10
+
+---
+
+## TD-036 — 6 enlaces de integración rotos
+
+- **Descripción:** El pipeline y los componentes core no están conectados entre sí. Los 6 enlaces rotos son:
+  - **TD-036.A-1:** Planner → TaskManager (Planner no delega tareas al TaskManager)
+  - **TD-036.A-2:** Planner → WorkflowManager (Planner no crea workflows)
+  - **TD-036.B-3:** Pipeline → ModelManager (Pipeline no invoca el LLM)
+  - **TD-036.B-4:** Agent → ToolExecutor (Agentes no ejecutan herramientas)
+  - **TD-036.B-5:** Pipeline → StreamingManager (Pipeline no usa streaming)
+  - **TD-036.B-6:** Pipeline → TaskManager (Pipeline no rastrea tareas)
+- **Causa:** Los componentes fueron construidos y probados individualmente pero nunca conectados end-to-end.
+- **Archivos afectados:** `packages/core/src/pipeline.py`, `packages/core/src/planner.py`, `packages/llm/src/llm/`
+- **Prioridad:** ALTA
+- **Estado:** pendiente Sprint 2.0
+- **Sprint previsto:** 2.0
+
+---
+
+## TD-037 — Tests de permisos usan "Automatic" capitalizado vs literal minúscula
+
+- **Descripción:** 25 tests de permisos fallan porque usan `PermissionMode.AUTOMATIC` que resuelve a `"Automatic"` (capitalizado), pero el código de permisiones compara contra el literal `"automatic"` (minúscula). Es un sub-caso del ya resuelto TD-002 que persiste en los tests.
+- **Causa:** Los tests no fueron actualizados cuando se normalizó el enum de permisos.
+- **Archivos afectados:** `apps/backend/tests/`
+- **Prioridad:** MEDIA
+- **Estado:** pendiente Sprint 2.0
+- **Sprint previsto:** 2.0
+
+---
+
+## TD-038 — Google API key expuesta en query string de URL
+
+- **Descripción:** El proveedor Google Gemini incluye la API key como parámetro de query string en la URL. Esto expone la key en logs, historial de navegador, y proxies.
+- **Causa:** La API de Google Gemini usa query params por diseño, pero se debería evitar logging de la URL completa.
+- **Archivos afectados:** `packages/llm/src/llm/providers/google.py`
+- **Prioridad:** ALTA
+- **Estado:** pendiente Sprint 2.1
+- **Sprint previsto:** 2.1
+
+---
+
+## TD-039 — `PermissionService` deny list con prefijo demasiado amplio
+
+- **Descripción:** La deny list del `PermissionService` usa coincidencia de prefijo que puede bloquear comandos legítimos. Por ejemplo, un patrón que bloquea `rm -rf /` también podría bloquear `rm -rf /tmp/myapp/cache` si la coincidencia es incorrecta, o viceversa, permitir variantes peligrosas.
+- **Causa:** Lógica de coincidencia de patrones simplificada.
+- **Archivos afectados:** `apps/backend/src/permissions/`
+- **Prioridad:** MEDIA
+- **Estado:** pendiente Sprint 2.1
+- **Sprint previsto:** 2.1
+
+---
+
+## TD-040 — Audit log crece sin límite
+
+- **Descripción:** El `AuditRecorder` escribe entradas continuamente sin rotación, archivo máximo, ni limpieza. En uso prolongado, el archivo de audit puede crecer indefinidamente consumiendo disco.
+- **Causa:** No se implementó política de retención.
+- **Archivos afectados:** `packages/core/src/observability.py`
+- **Prioridad:** BAJA
+- **Estado:** pendiente Sprint 2.1
+- **Sprint previsto:** 2.1
+
+---
+
 ## Resumen
 
 | Prioridad | Total | Resueltos | Pendientes |
 |---|---|---|---|
-| ALTA | 8 | 5 | 3 |
-| MEDIA | 12 | 2 | 10 |
-| BAJA | 6 | 0 | 6 |
-| **Total** | **26** | **7** | **19** |
+| ALTA | 11 | 9 | 2 |
+| MEDIA | 16 | 5 | 11 |
+| BAJA | 8 | 0 | 8 |
+| **Total** | **35** | **14** | **21** |
