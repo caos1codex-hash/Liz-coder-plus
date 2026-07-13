@@ -37,7 +37,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.events import (
     CHECKPOINT_RESTORED,
@@ -47,6 +47,9 @@ from src.events import (
     RECOVERY_TASK_RESUMED,
     RECOVERY_WORKFLOW_RESUMED,
 )
+
+if TYPE_CHECKING:
+    from src.task import TaskState
 
 logger = logging.getLogger(__name__)
 
@@ -422,13 +425,10 @@ class RecoveryManager:
         #    process died — reset them to READY so they can be
         #    retried).
         try:
-            stuck = self._task_manager.list_by_state(
-                __import__("src.task", fromlist=["TaskState"]).TaskState.RUNNING
-            )
+            from src.task import TaskState
+            stuck = self._task_manager.list_by_state(TaskState.RUNNING)
             for task in stuck:
-                # If the task was running, it was interrupted.
-                # Reset to READY for retry.
-                task.state = __import__("src.task", fromlist=["TaskState"]).TaskState.READY
+                task.state = TaskState.READY
                 task.errors.append("recovered: interrupted by restart")
                 if hasattr(self._task_manager, "_persist_task"):
                     await self._task_manager._persist_task(task)

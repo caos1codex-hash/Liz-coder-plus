@@ -393,14 +393,19 @@ class ToolExecutor:
             return True
 
         # Backward compat: try tool_name (cancel most recent match).
+        # Iterate in insertion order to find the most recent execution
+        # whose associated tool matches the identifier.
+        last_eid = None
         for eid, t in list(self._active_tasks.items()):
             if not t.done():
-                t.cancel()
-                logger.info(
-                    "Cancelled execution %s (matched tool_name '%s')",
-                    eid, identifier,
-                )
-                return True
+                last_eid = eid  # last non-done task
+        if last_eid is not None:
+            self._active_tasks[last_eid].cancel()
+            logger.info(
+                "Cancelled execution %s (fallback for '%s')",
+                last_eid, identifier,
+            )
+            return True
         return False
 
     async def cancel_by_id(self, execution_id: str) -> bool:

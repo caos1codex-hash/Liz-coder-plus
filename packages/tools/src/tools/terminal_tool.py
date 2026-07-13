@@ -89,14 +89,13 @@ class TerminalTool(BaseTool):
                 field="command",
             )
 
-        # Check for known dangerous patterns.
+        # Check for known dangerous patterns — BLOCK execution.
         cmd_lower = command.lower()
         for pattern in _DANGEROUS_PATTERNS:
             if pattern.lower() in cmd_lower:
-                logger.warning(
-                    "Dangerous command pattern detected: '%s' in '%s'",
-                    pattern,
-                    command,
+                raise ToolError(
+                    f"Dangerous command pattern detected and blocked: '{pattern}'",
+                    field="command",
                 )
 
     async def _execute(
