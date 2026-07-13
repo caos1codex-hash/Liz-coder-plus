@@ -24,6 +24,7 @@ from typing import Any
 
 from ..base import BaseAgent
 from ..config import MultiAgentConfig
+from ..enums import AgentStatus
 from ..logs import AgentLogger
 from .context import ContextManager
 from .enums import (
@@ -547,6 +548,11 @@ class WorkflowEngine:
             step.retry += 1
             step.error = None
             step.transition_to(StepStatus.READY)
+            # Resetear el agente a IDLE para que pueda aceptar el retry
+            # (tras un fallo, BaseAgent.execute() lo deja en ERROR).
+            agent = self._agents.get(agent_name)
+            if agent is not None and agent.status == AgentStatus.ERROR:
+                agent._set_status(AgentStatus.IDLE)  # noqa: SLF001
             result.retry_count += 1
             await self._emit(
                 WorkflowEvent.STEP_RETRY,
@@ -564,6 +570,10 @@ class WorkflowEngine:
             step.agent_reassigned.append(agent_name)
             step.error = None
             step.transition_to(StepStatus.READY)
+            # Resetear el agente (queda en ERROR tras el fallo).
+            agent = self._agents.get(agent_name)
+            if agent is not None and agent.status == AgentStatus.ERROR:
+                agent._set_status(AgentStatus.IDLE)  # noqa: SLF001
             result.reassign_count += 1
             await self._emit(
                 WorkflowEvent.AGENT_REASSIGNED,
@@ -588,9 +598,10 @@ class WorkflowEngine:
                 },
                 correlation_id=workflow.id,
             )
+            # Propagar SKIP a dependientes (no pueden ejecutarse sin su dep).
+            self._propagate_skip(workflow, step.id)
             # ¿Workflow completo tras skip?
             if self._all_steps_terminal(workflow):
-                # Si todos los REQUIRED están completos, el workflow está OK.
                 required_failed = any(
                     s.status == StepStatus.FAILED and s.criticality == StepCriticality.REQUIRED
                     for s in workflow.steps.values()
@@ -608,9 +619,13 @@ class WorkflowEngine:
                 and self._failover.cancel_on_required_fail
             ):
                 workflow.transition_to(WorkflowStatus.FAILED)
+                # Propagar SKIP a dependientes (no pueden ejecutarse).
+                self._propagate_skip(workflow, step.id)
             else:
                 # Step OPTIONAL fallido definitivo: dejarlo FAILED pero
                 # permitir que el workflow continúe.
+                # Propagar SKIP a dependientes.
+                self._propagate_skip(workflow, step.id)
                 if self._all_steps_terminal(workflow):
                     required_failed = any(
                         s.status == StepStatus.FAILED and s.criticality == StepCriticality.REQUIRED
@@ -653,6 +668,25 @@ class WorkflowEngine:
     def _all_steps_terminal(self, workflow: Workflow) -> bool:
         """Devuelve True si todos los steps están en estado terminal."""
         return all(s.is_terminal for s in workflow.steps.values())
+
+    def _propagate_skip(self, workflow: Workflow, skipped_step_id: str) -> None:
+        """Propaga SKIP a todos los dependientes del step saltado.
+
+        Esto evita que el engine intente ejecutar steps cuyas dependencias
+        no se completaron. Los dependientes se marcan como SKIPPED en cadena.
+        """
+        dependents = workflow.dag.dependents_of(skipped_step_id)
+        for dep_id in dependents:
+            dep_step = workflow.steps.get(dep_id)
+            if dep_step is None or dep_step.is_terminal:
+                continue
+            try:
+                dep_step.transition_to(StepStatus.SKIPPED)
+                # Recursión para propagar en cadena.
+                self._propagate_skip(workflow, dep_id)
+            except ValueError:
+                # El step ya está en un estado que no permite SKIP.
+                pass
 
     # ------------------------------------------------------------------
     # Métricas / observabilidad

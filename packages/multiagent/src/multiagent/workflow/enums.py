@@ -61,7 +61,9 @@ _ALLOWED_STEP_TRANSITIONS: dict[StepStatus, frozenset[StepStatus]] = {
     StepStatus.RUNNING: frozenset({
         StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.CANCELLED,
     }),
-    StepStatus.FAILED: frozenset({StepStatus.READY, StepStatus.CANCELLED}),  # retry
+    StepStatus.FAILED: frozenset({
+        StepStatus.READY, StepStatus.CANCELLED, StepStatus.SKIPPED,
+    }),  # retry o skip definitivo
     StepStatus.COMPLETED: frozenset(),
     StepStatus.SKIPPED: frozenset(),
     StepStatus.CANCELLED: frozenset(),

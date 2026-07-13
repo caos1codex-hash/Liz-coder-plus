@@ -171,11 +171,27 @@ class Scheduler:
                 a for a in agents
                 if a.name not in agents_busy and a.name not in excluded_for_step
             ]
-            agent = self._lb.select(
-                available_agents,
-                action=step.action or step.name,
-                exclude=excluded_for_step,
-            )
+            # Si el step tiene un agente asignado explícitamente, respetarlo
+            # si está disponible y no está excluido. Si está excluido (falló
+            # antes), usar el LoadBalancer para elegir otro.
+            if step.agent and step.agent not in excluded_for_step:
+                explicit = next(
+                    (a for a in available_agents if a.name == step.agent), None
+                )
+                if explicit is not None:
+                    agent = explicit
+                else:
+                    agent = self._lb.select(
+                        available_agents,
+                        action=step.action or step.name,
+                        exclude=excluded_for_step,
+                    )
+            else:
+                agent = self._lb.select(
+                    available_agents,
+                    action=step.action or step.name,
+                    exclude=excluded_for_step,
+                )
             if agent is None:
                 # Sin agente disponible; el step queda esperando.
                 continue

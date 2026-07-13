@@ -69,8 +69,16 @@ class Event:
 
     @property
     def type_str(self) -> str:
-        """Devuelve el tipo como string."""
-        return self.type.value if isinstance(self.type, WorkflowEvent) else str(self.type)
+        """Devuelve el tipo como string.
+
+        Maneja tanto `WorkflowEvent` como strings planos. Usa `hasattr`
+        en lugar de `isinstance` para ser robusto frente a re-imports
+        del módulo enums (que pueden crear clases distintas con el
+        mismo nombre durante los tests).
+        """
+        if hasattr(self.type, "value"):
+            return self.type.value  # type: ignore[union-attr]
+        return str(self.type)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,10 +169,11 @@ class EventBus:
             filter_fn:  Filtro adicional; si devuelve False, el handler no se llama.
         """
         token = str(uuid.uuid4())
-        type_str = (
-            event_type.value if isinstance(event_type, WorkflowEvent)
-            else event_type
-        )
+        # Usar hasattr para ser robusto frente a re-imports del enum.
+        if hasattr(event_type, "value"):
+            type_str = event_type.value  # type: ignore[union-attr]
+        else:
+            type_str = event_type  # str o None
         sub = _Subscription(
             handler=handler,
             event_type=type_str,
@@ -262,10 +271,10 @@ class EventBus:
             limit:          Máximo número de eventos a devolver.
             correlation_id: Filtra por correlation_id.
         """
-        type_str = (
-            event_type.value if isinstance(event_type, WorkflowEvent)
-            else event_type
-        )
+        if hasattr(event_type, "value"):
+            type_str = event_type.value  # type: ignore[union-attr]
+        else:
+            type_str = event_type
         result: list[Event] = []
         for e in reversed(self._history):
             if type_str is not None and e.type_str != type_str:

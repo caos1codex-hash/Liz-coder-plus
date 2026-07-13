@@ -394,17 +394,23 @@ class Workflow:
         return self.dag.validate()
 
     def ready_steps(self) -> list[str]:
-        """Steps listos para ejecutarse (deps completadas, no en curso)."""
+        """Steps listos para ejecutarse (deps completadas, no en curso ni terminal).
+
+        Un step está "listo" si:
+        - Está en PENDING (nunca se ha planificado) o READY (vuelve de un retry).
+        - Todas sus dependencias están COMPLETED.
+        - No está ya RUNNING, COMPLETED, FAILED, SKIPPED o CANCELLED.
+        """
         completed = {s_id for s_id, s in self.steps.items() if s.is_completed}
         in_progress = {
             s_id for s_id, s in self.steps.items()
-            if s.status in (StepStatus.RUNNING, StepStatus.READY)
+            if s.status == StepStatus.RUNNING
         }
-        skipped_or_cancelled = {
+        terminal = {
             s_id for s_id, s in self.steps.items()
-            if s.status in (StepStatus.SKIPPED, StepStatus.CANCELLED, StepStatus.FAILED)
+            if s.is_terminal
         }
-        return self.dag.ready_steps(completed, skip=in_progress | skipped_or_cancelled)
+        return self.dag.ready_steps(completed, skip=in_progress | terminal)
 
     def next_step(self) -> Step | None:
         """Devuelve el siguiente step listo, o None."""
