@@ -197,7 +197,7 @@ class BaseAgent(ABC):
                 - ``error``: Error message if failed, else None.
                 - ``duration_ms``: Execution time in milliseconds.
         """
-        if self._state not in (AgentState.READY, AgentState.COMPLETED):
+        if self._state not in (AgentState.READY, AgentState.COMPLETED, AgentState.FAILED):
             return {
                 "content": "",
                 "agent_id": self._id,
