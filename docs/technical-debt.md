@@ -1,7 +1,7 @@
 # Deuda Técnica — Liz Coder Plus
 
 > **Fuente:** Informe de Auditoría de Integración Sprint 1.8 + Riesgos Sprint 1.7
-> **Última actualización:** Sprint 1.8
+> **Última actualización:** Sprint 1.9
 
 ---
 
@@ -154,8 +154,8 @@
 - **Causa:** Sprint 1.7 no incluyó persistencia.
 - **Archivos afectados:** `packages/core/src/task.py`
 - **Prioridad:** ALTA
-- **Estado:** pendiente
-- **Sprint previsto:** 1.9
+- **Estado:** resuelto
+- **Sprint previsto:** 1.8
 
 ---
 
@@ -165,8 +165,8 @@
 - **Causa:** Sprint 1.7 no incluyó persistencia.
 - **Archivos afectados:** `packages/core/src/workflow.py`
 - **Prioridad:** ALTA
-- **Estado:** pendiente
-- **Sprint previsto:** 1.9
+- **Estado:** resuelto
+- **Sprint previsto:** 1.8
 
 ---
 
@@ -280,11 +280,44 @@
 
 ---
 
+## TD-026 — `StreamingManager._get_stream_iterator` retorna async generator (no awaitable)
+
+- **Descripción:** El método `_get_stream_iterator` retorna un generador asíncrono, pero los consumidores esperan un awaitable. La API es inconsistente: algunos callers hacen `await` (que falla con TypeError) mientras otros iteran correctamente. Se necesita una API unificada.
+- **Causa:** Cambio tardío de `async def -> stream` a generador durante el desarrollo de Sprint 1.9.
+- **Archivos afectados:** `packages/llm/src/llm/streaming/manager.py`
+- **Prioridad:** MEDIA
+- **Estado:** pendiente
+- **Sprint previsto:** 1.9
+
+---
+
+## TD-027 — `ContextManager` usa estimación heurística de tokens (chars/4)
+
+- **Descripción:** El `ContextManager` estima tokens con `len(text) / 4`, lo cual es impreciso para español y no refleja el tokenizado real del modelo. Puede causar que prompts excedan la ventana de contexto o que se recorte innecesariamente.
+- **Causa:** Se optó por una solución ligera sin dependencia de tokenizers (tiktoken) en el MVP.
+- **Archivos afectados:** `packages/llm/src/llm/context/manager.py`
+- **Prioridad:** MEDIA
+- **Estado:** pendiente
+- **Sprint previsto:** 2.0
+
+---
+
+## TD-028 — Tests de providers requieren endpoints HTTP reales para integración
+
+- **Descripción:** Las pruebas de integración de los proveedores LLM (Ollama, OpenAI, Anthropic, etc.) necesitan un endpoint HTTP real o un mock de servidor completo. Actualmente los tests unitarios usan mocks de `httpx` pero no existe un entorno de integración automatizado.
+- **Causa:** Los providers se desarrollaron con mocks ligeros; no se configuró un servidor de prueba HTTP.
+- **Archivos afectados:** `packages/llm/tests/`
+- **Prioridad:** BAJA
+- **Estado:** pendiente
+- **Sprint previsto:** 2.0
+
+---
+
 ## Resumen
 
 | Prioridad | Total | Resueltos | Pendientes |
 |---|---|---|---|
-| ALTA | 8 | 3 | 5 |
-| MEDIA | 10 | 1 | 9 |
-| BAJA | 5 | 0 | 5 |
-| **Total** | **23** | **4** | **19** |
+| ALTA | 8 | 5 | 3 |
+| MEDIA | 12 | 2 | 10 |
+| BAJA | 6 | 0 | 6 |
+| **Total** | **26** | **7** | **19** |

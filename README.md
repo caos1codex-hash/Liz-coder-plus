@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.2.0`
-**Estado:** Sprint 1.8 — Integración Total, Persistencia, Scheduler y Resiliencia
+**Versión:** `v0.2.1`
+**Estado:** Sprint 1.9 — Motor LLM: Providers, Streaming, Contexto y Prompt
 
 ---
 
@@ -38,7 +38,8 @@ Liz-coder-plus/
 │   ├── memory/    → Memoria persistente (SQLite inicial)
 │   ├── agents/    → Agentes especializados
 │   ├── tools/     → Herramientas externas y comandos
-│   └── shared/    → Modelos y tipos comunes
+│   ├── shared/    → Modelos y tipos comunes
+│   └── llm/       → Motor LLM (providers, streaming, contexto, prompt)
 ├── docs/          → Documentación del proyecto
 ├── tests/         → Pruebas (unit, integration, e2e)
 ├── scripts/       → Scripts de utilidad y automatización
@@ -64,11 +65,12 @@ Liz-coder-plus/
 | Backend API     | FastAPI                             | API REST + WebSocket               |
 | Memoria         | SQLite (SQLAlchemy)                 | Persistencia inicial               |
 | Empaquetado     | Monorepo (carpetas independientes)  | Modularidad y crecimiento          |
+| Clientes HTTP    | httpx                               | Proveedores LLM (streaming async) |
 | Control versión | Git + GitHub                        | Colaboración y CI/CD futuro        |
 
 ## Cómo ejecutar el proyecto
 
-> Esta versión `v0.2.0` corresponde al Sprint 1.8 — Integración Total, Persistencia, Scheduler y Resiliencia.
+> Esta versión `v0.2.1` corresponde al Sprint 1.9 — Motor LLM: Providers, Streaming, Contexto y Prompt.
 > Solo se establecen los cimientos. Aún no hay UI final ni modelos IA conectados.
 
 ### Requisitos previos
@@ -152,6 +154,15 @@ dotnet run
 - Observabilidad avanzada con dashboard interno y exportadores.
 - Eliminación de deuda técnica (ToolExecutor keyed por execution_id, PermissionMode consistente).
 - 70 nuevos tests de integración.
+
+### Sprint 1.9 — Motor LLM: Providers, Streaming, Contexto y Prompt ✅
+- Paquete `packages/llm/` con sub-paquetes: providers, streaming, context, prompt.
+- ModelManager: registro, activación, caché, warmup y health checking de proveedores.
+- Protocolo unificado `LLMProvider` con 5 proveedores: Ollama, OpenAI, Anthropic, Google, OpenRouter.
+- ContextManager: gestión de ventana de tokens con smart trimming y auto-summarization.
+- PromptPipeline: construcción unificada de prompts desde system, memory, history, planner, tasks, tools.
+- StreamingManager: streaming en tiempo real con cancelación, timeout, retry, backpressure y multi-cliente.
+- Integración con Orchestrator: `attach_llm()`, `stage_build_prompt`, `stream_message()`.
 
 ### Sprint 2 — Agente Conversacional
 - Primer agente conversacional con IA real.

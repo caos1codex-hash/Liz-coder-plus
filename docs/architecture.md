@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.2.0` — Sprint 1.8 (Integración Total, Persistencia, Scheduler y Resiliencia).
+> Versión: `v0.2.1` — Sprint 1.9 (Motor LLM: Providers, Streaming, Contexto y Prompt).
 
 ## 1. Visión general
 
@@ -1333,3 +1333,219 @@ principales resueltos son:
 | `PermissionMode` inconsistente entre enums y config | ✅ Resuelto | Unificado en `packages/shared/src/enums.py` |
 | Métricas se pierden al reiniciar | ⚠️ Mitigado | Exportadores disponibles; persistencia parcial |
 | Tests de aislamiento | ⚠️ Mitigado | 70 nuevos tests de integración |
+
+## 11. Motor LLM — Detalle Técnico (Sprint 1.9)
+
+### 11.1 Visión General
+
+El Sprint 1.9 introduce el paquete `packages/llm/`, el motor de
+interacción con modelos de lenguaje. Antes de este sprint el sistema
+no tenía conexión real con ningún LLM; los agentes operaban de forma
+simulada. A partir de ahora, el Orchestrator puede construir prompts,
+gestionar la ventana de contexto, seleccionar proveedores y recibir
+respuestas en streaming.
+
+Estructura del paquete:
+
+```
+packages/llm/
+├── src/llm/
+│   ├── __init__.py
+│   ├── manager.py          → ModelManager (registro, activación, caché, warmup, health)
+│   ├── protocol.py         → LLMProvider (Protocol unificado)
+│   ├── context/
+│   │   ├── __init__.py
+│   │   └── manager.py      → ContextManager (ventana de tokens, trimming, auto-summarization)
+│   ├── prompt/
+│   │   ├── __init__.py
+│   │   └── pipeline.py     → PromptPipeline (construcción unificada de prompts)
+│   ├── streaming/
+│   │   ├── __init__.py
+│   │   └── manager.py      → StreamingManager (streaming con cancelación, timeout, retry)
+│   └── providers/
+│       ├── __init__.py
+│       ├── ollama.py       → OllamaProvider
+│       ├── openai.py       → OpenAIProvider
+│       ├── anthropic.py    → AnthropicProvider
+│       ├── google.py       → GoogleProvider
+│       └── openrouter.py   → OpenRouterProvider
+```
+
+### 11.2 ModelManager
+
+El `ModelManager` es el punto de entrada central del paquete LLM.
+Responsabilidades principales:
+
+| Responsabilidad | Detalle |
+|---|---|
+| **Registro** | `register_provider(name, provider_cls, config)` — registra un proveedor disponible. |
+| **Activación** | `activate(name)` — selecciona el proveedor activo para la sesión. |
+| **Selección** | `get_active_provider() -> LLMProvider` — retorna el proveedor actual. |
+| **Caché** | Respuestas cacheadas por hash del prompt para evitar llamadas redundantes. |
+| **Warmup** | `warmup()` — pre-carga modelos y verifica conectividad al arrancar. |
+| **Health checking** | `health_check(name?) -> dict` — diagnostica estado de uno o todos los proveedores. |
+
+```python
+manager = ModelManager()
+manager.register_provider("ollama", OllamaProvider, {"base_url": "http://localhost:11434"})
+manager.register_provider("openai", OpenAIProvider, {"api_key": "sk-..."})
+manager.activate("ollama")
+provider = manager.get_active_provider()
+```
+
+### 11.3 LLMProvider — Protocol Unificado
+
+Todos los proveedores implementan el mismo `Protocol`, lo que permite
+intercambiarlos sin modificar el Orchestrator:
+
+```python
+class LLMProvider(Protocol):
+    async def chat(self, messages: list[dict], **kwargs) -> str: ...
+    async def stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]: ...
+    async def embeddings(self, text: str) -> list[float]: ...
+    async def tokenize(self, text: str) -> int: ...
+    async def health(self) -> bool: ...
+    async def close(self) -> None: ...
+```
+
+| Método | Propósito |
+|---|---|
+| `chat()` | Generación completa (non-streaming). |
+| `stream()` | Generación en tiempo real via async iterator. |
+| `embeddings()` | Vectores de embedding para búsqueda semántica. |
+| `tokenize()` | Cuenta de tokens del texto (proxy para contexto). |
+| `health()` | Verifica que el endpoint responde. |
+| `close()` | Limpia recursos (conexiones HTTP, sesiones). |
+
+### 11.4 Proveedores Implementados
+
+| Proveedor | Clase | Endpoint | Notas |
+|---|---|---|---|
+| Ollama | `OllamaProvider` | `http://localhost:11434` | Modelos locales, sin API key. |
+| OpenAI | `OpenAIProvider` | `https://api.openai.com/v1` | GPT-4o, GPT-4o-mini, etc. |
+| Anthropic | `AnthropicProvider` | `https://api.anthropic.com` | Claude 3.5 Sonnet, Claude 3 Opus. |
+| Google | `GoogleProvider` | `https://generativelanguage.googleapis.com` | Gemini Pro, Gemini Ultra. |
+| OpenRouter | `OpenRouterProvider` | `https://openrouter.ai/api/v1` | Agregador multi-modelo con una sola API key. |
+
+Todos los proveedores utilizan `httpx` como cliente HTTP asíncrono,
+con soporte para timeouts configurables y reintentos automáticos.
+
+### 11.5 ContextManager — Gestión de Ventana de Contexto
+
+El `ContextManager` gestiona la ventana de tokens disponible para cada
+modelo, asegurando que las conversaciones no excedan los límites:
+
+| Capacidad | Detalle |
+|---|---|
+| **Ventana de tokens** | Límite configurable por modelo (ej: 8192 para Ollama, 128K para GPT-4o). |
+| **Estimación heurística** | Cuenta aproximada de tokens = `len(text) / 4` (español). |
+| **Smart trimming** | Elimina mensajes más antiguos preservando el system prompt y los más recientes. |
+| **Auto-summarization** | Cuando el historial supera el umbral, resume turnos antiguos en un solo mensaje de contexto. |
+
+```python
+ctx = ContextManager(max_tokens=8192)
+ctx.add_system("Eres Liz, un asistente IA...")
+ctx.add_history([{"role": "user", "content": "..."}, ...])
+trimmed = ctx.build_messages()  # -> lista recortada que cabe en la ventana
+```
+
+### 11.6 PromptPipeline — Construcción Unificada de Prompts
+
+El `PromptPipeline` orquesta la construcción del prompt final,
+combinando múltiples fuentes de información en un orden determinista:
+
+```
+PromptPipeline.build(system_prompt, memory, history, plan, tasks, tools)
+    │
+    ├── 1. System Prompt (instrucciones base del agente)
+    ├── 2. Memory (contexto relevante recuperado)
+    ├── 3. History (historial de conversación, pasado por ContextManager)
+    ├── 4. Plan (plan del Planner, si existe)
+    ├── 5. Tasks (tareas pendientes del TaskManager)
+    └── 6. Tools (descripciones de herramientas disponibles)
+        │
+        ▼
+    list[dict]  →  mensajes listos para enviar al LLMProvider
+```
+
+Esta construcción se integra como la etapa `stage_build_prompt`
+dentro del pipeline de ejecución del Orchestrator.
+
+### 11.7 StreamingManager — Streaming en Tiempo Real
+
+El `StreamingManager` gestiona la transmisión incremental de
+respuestas del LLM hacia los clientes WebSocket:
+
+| Capacidad | Detalle |
+|---|---|
+| **Cancelación** | El cliente puede cancelar el stream en cualquier momento. |
+| **Timeout** | Timeout configurable por proveedor y por solicitud. |
+| **Retry** | Reintentos automáticos con backoff exponencial ante errores transitorios. |
+| **Backpressure** | Control de flujo para evitar saturar el buffer del cliente. |
+| **Multi-cliente** | Múltiples clientes pueden suscribirse al mismo stream. |
+
+```python
+stream_mgr = StreamingManager()
+async for chunk in stream_mgr.stream_message(provider, messages):
+    await websocket.send_text(chunk)  # envío incremental al desktop
+```
+
+### 11.8 Puntos de Integración con el Orchestrator
+
+El motor LLM se integra con el sistema existente en tres puntos
+clave:
+
+| Punto de integración | Detalle |
+|---|---|
+| `Orchestrator.attach_llm(manager)` | Inyecta el `ModelManager` en el Orchestrator. |
+| `pipeline: stage_build_prompt` | Nueva etapa del pipeline que invoca `PromptPipeline.build()`. |
+| `stream_message()` | Método del Orchestrator que delega en `StreamingManager`. |
+
+### 11.9 Diagrama de Flujo LLM
+
+```
+┌──────────┐     ┌───────┐     ┌──────────────┐     ┌───────────────┐
+│  Usuario  │────►│  API  │────►│ Orchestrator │────►│ PromptPipeline│
+└──────────┘     └───────┘     └──────┬───────┘     └───────┬───────┘
+                                              │                     │
+                                              │    Combina:         │
+                                              │    system + memory  │
+                                              │    + history + plan │
+                                              │    + tasks + tools  │
+                                              │                     ▼
+                                              │            ┌────────────────┐
+                                              │            │ ContextManager │
+                                              │            │ (trim + summary)│
+                                              │            └───────┬────────┘
+                                              │                    │
+                                              │                    ▼
+                                              │          ┌──────────────────┐
+                                              └─────────►│   LLMProvider    │
+                                                         │ (Ollama/OpenAI/  │
+                                                         │  Anthropic/      │
+                                                         │  Google/         │
+                                                         │  OpenRouter)     │
+                                                         └────────┬─────────┘
+                                                                  │
+                                                                  ▼
+                                                         ┌──────────────────┐
+                                                         │ StreamingManager  │
+                                                         │ (chunk a chunk)   │
+                                                         └────────┬─────────┘
+                                                                  │
+                                                                  ▼
+                                                         ┌──────────────────┐
+                                                         │    Respuesta     │
+                                                         │  (al usuario)    │
+                                                         └──────────────────┘
+```
+
+### 11.10 Decisiones de Diseño (Sprint 1.9)
+
+| Decisión | Justificación |
+|---|---|
+| Protocol en vez de ABC | Permite que cualquier clase cumpla la interfaz sin herencia obligatoria. |
+| `httpx` como cliente HTTP | Async nativo, soporte HTTP/2, mejor que `aiohttp` para streaming. |
+| Estimación heurística de tokens | Evita dependencia pesada (tiktoken) en el MVP; se mejorará en Sprint 2.0. |
+| PromptPipeline separado del ContextManager | Responsabilidad única: uno construye, el otro recorta. |
+| Caché en ModelManager | Evita llamadas duplicadas al mismo modelo con el mismo prompt. |
