@@ -46,6 +46,7 @@ from .memory import AgentMemory
 from .messages import Message, MessageBus
 
 logger = logging.getLogger(__name__)
+_log = logger  # alias for in-class use where `logger` is shadowed by kwarg
 
 
 # ----------------------------------------------------------------------
@@ -187,7 +188,7 @@ class BaseAgent(ABC):
         self._current_task_id: str | None = None
         self._subscription_token: str | None = None
 
-        logger.info(
+        _log.info(
             "Agent '%s' (id=%s) instantiated (permissions=%d tools=%d)",
             self._name, self._id, len(self._permissions), len(self._tools),
         )

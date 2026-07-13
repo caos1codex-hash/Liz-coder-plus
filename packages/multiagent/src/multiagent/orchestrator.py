@@ -222,7 +222,7 @@ class AgentOrchestrator:
         Si `task.agent_name` está vacío, selecciona un agente capaz.
         """
         if task is None:
-            task = await self._queue.dequeue(timeout=0.0)
+            task = self._queue.dequeue_nowait()
             if task is None:
                 return {"status": "empty", "agent": None, "task_id": None}
         async with self._lock:
@@ -432,8 +432,6 @@ class AgentOrchestrator:
 
     def metrics(self) -> dict[str, Any]:
         """Métricas agregadas del orquestador."""
-        async with self._lock:
-            pass  # ensure lock acquired for consistency
         return {
             "orchestrator": dict(self._metrics),
             "agents": {
