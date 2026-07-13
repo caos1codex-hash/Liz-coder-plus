@@ -154,13 +154,30 @@ class Orchestrator:
         try:
             agent = await self._router.route(message, context)
             response_text = await agent.handle(message, context)
+        except (ValueError, TypeError) as exc:
+            # Validation / type errors from the agent.
+            logger.warning("Agent validation error: %s", exc)
+            await self._sessions.append_turn(
+                session_id,
+                role="system",
+                content=f"validation_error: {exc}",
+                metadata={"agent": "error", "error_type": "validation"},
+            )
+            return {
+                "type": "error",
+                "content": "El mensaje no pudo ser procesado correctamente.",
+                "status": "failed",
+                "session_id": session_id,
+                "error": str(exc),
+            }
         except Exception as exc:  # noqa: BLE001
+            # Unexpected errors from agents or routing.
             logger.exception("Agent failed to handle message")
             await self._sessions.append_turn(
                 session_id,
                 role="system",
                 content=f"error: {exc}",
-                metadata={"agent": "error"},
+                metadata={"agent": "error", "error_type": "unexpected"},
             )
             return {
                 "type": "error",

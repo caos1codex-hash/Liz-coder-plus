@@ -41,14 +41,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _build_router() -> APIRouter:
-    """Return the APIRouter for /ws endpoints.
-
-    This function exists so a fresh router can be created per test
-    invocation with its own orchestrator/manager pair. The module-level
-    `router` is constructed once at import time for the production app.
-    """
-    return APIRouter()
+# ---------------------------------------------------------------------
+# Module-level wiring used by the FastAPI app.
+# ---------------------------------------------------------------------
 
 
 async def chat_endpoint(
