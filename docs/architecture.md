@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.2.0` — Sprint 1.7 (Orchestrator Avanzado).
+> Versión: `v0.2.0` — Sprint 1.8 (Integración Total, Persistencia, Scheduler y Resiliencia).
 
 ## 1. Visión general
 
@@ -1026,3 +1026,310 @@ asyncio.run(main())
 - Exportador Prometheus para métricas.
 - Scheduler basado en prioridades para TaskManager.
 - Integración completa del sistema de permisos en el pipeline.
+
+## 10. Sprint 1.8 — Persistencia, Scheduler y Resiliencia
+
+Sprint 1.8 completa la integración de todos los subsistemas construidos
+en sprints anteriores, añadiendo persistencia durable, planificación
+temporal, recuperación ante fallos y observabilidad avanzada. El
+resultado es un sistema resiliente que sobrevive reinicios, programa
+tareas futuras y ofrece visibilidad completa de su estado.
+
+### 10.1 Repositorios de Persistencia
+
+Los repositorios permiten almacenar y recuperar Tasks, Workflows y
+Execution History en SQLite, eliminando la pérdida de estado ante
+reinicios del proceso.
+
+```
+packages/memory/src/memory/repositories/
+├── __init__.py                  → API pública de repositorios
+├── task_repository.py           → TaskRepository
+├── workflow_repository.py       → WorkflowRepository
+└── execution_repository.py      → ExecutionRepository
+```
+
+#### TaskRepository
+
+| Método | Descripción |
+|---|---|
+| `create(task)` | Inserta una tarea nueva en SQLite |
+| `get(task_id)` | Recupera una tarea por ID |
+| `update(task)` | Actualiza estado, progreso, resultado |
+| `list_by_workflow(workflow_id)` | Tareas pertenecientes a un workflow |
+| `list_by_state(state)` | Tareas filtradas por estado |
+| `delete(task_id)` | Elimina una tarea |
+| `cleanup_old(days)` | Elimina tareas completadas antiguas |
+
+#### WorkflowRepository
+
+| Método | Descripción |
+|---|---|
+| `create(workflow)` | Inserta un workflow con su definición DAG |
+| `get(workflow_id)` | Recupera un workflow por ID |
+| `update_state(workflow_id, state)` | Actualiza estado del workflow |
+| `list_all()` | Lista todos los workflows |
+| `delete(workflow_id)` | Elimina un workflow |
+
+#### ExecutionRepository
+
+| Método | Descripción |
+|---|---|
+| `record(execution)` | Registra una ejecución completada |
+| `get_by_task(task_id)` | Historial de ejecuciones de una tarea |
+| `get_by_workflow(workflow_id)` | Historial de ejecuciones de un workflow |
+| `get_recent(limit)` | Últimas N ejecuciones |
+| `summary()` | Estadísticas agregadas |
+
+#### Migración SQL
+
+La migración `sprint_1_8_tasks_workflows.sql` crea las tablas
+`tasks`, `workflows`, `workflow_nodes`, `task_executions` y
+`execution_history` con índices apropiados.
+
+### 10.2 Motor de Scheduler
+
+El Scheduler permite programar tareas para ejecución futura,
+periódica o con reintentos automáticos.
+
+```
+packages/core/src/scheduler.py
+```
+
+#### SchedulerJob
+
+```python
+@dataclass
+class SchedulerJob:
+    id: str                       # UUID4
+    name: str                     # Nombre descriptivo
+    task_id: str | None           # Tarea asociada (opcional)
+    action: Callable              # Corrutina a ejecutar
+    schedule_type: ScheduleType   # ONCE | PERIODIC | RETRY
+    interval_seconds: float       # Intervalo para PERIODIC
+    max_retries: int              # Reintentos para RETRY
+    retry_delay: float            # Demora entre reintentos
+    scheduled_at: datetime        # Momento de ejecución (ONCE)
+    created_at: datetime
+    state: SchedulerJobState      # PENDING | SCHEDULED | RUNNING | COMPLETED | FAILED | CANCELLED
+```
+
+#### Scheduler
+
+| Método | Descripción |
+|---|---|
+| `schedule(job)` | Programa una nueva tarea |
+| `schedule_once(name, action, at)` | Ejecución única en momento futuro |
+| `schedule_periodic(name, action, interval)` | Ejecución periódica |
+| `schedule_retry(name, action, max_retries, delay)` | Reintentos con demora |
+| `cancel(job_id)` | Cancela un job programado |
+| `get_jobs()` | Lista todos los jobs |
+| `start()` | Inicia el loop del scheduler |
+| `stop()` | Detiene el scheduler |
+
+#### SchedulerRepository
+
+Persiste los jobs del scheduler en SQLite para sobrevivir reinicios.
+Al arrancar, el Scheduler restaura jobs `PENDING` y `SCHEDULED`
+desde el repositorio.
+
+```
+Scheduler.schedule()
+  │
+  ├─ SchedulerRepository.persist(job)
+  ├─ asyncio.create_task(_run_job(job))
+  │     │
+  │     ├─ job.state = RUNNING
+  │     ├─ await job.action()
+  │     ├─ job.state = COMPLETED
+  │     └─ (o) job.state = FAILED → retry logic
+  │
+  └─ emit: scheduler.job.{scheduled,completed,failed}
+```
+
+### 10.3 Sistema de Recuperación
+
+El sistema de recuperación permite al Orchestrator y sus componentes
+sobrevivir a reinicios, reanudando tareas y workflows desde su último
+checkpoint.
+
+```
+packages/core/src/recovery.py
+```
+
+#### RecoveryManager
+
+| Método | Descripción |
+|---|---|
+| `create_checkpoint(entity_type, entity_id, data)` | Guarda un checkpoint |
+| `get_latest(entity_type, entity_id)` | Recupera el último checkpoint |
+| `list_checkpoints(entity_type, entity_id)` | Historial de checkpoints |
+| `delete_checkpoints(entity_type, entity_id)` | Limpia checkpoints |
+| `recover_all()` | Reanuda todas las entidades con checkpoints activos |
+| `recover_task(task_id)` | Reanuda una tarea específica |
+| `recover_workflow(workflow_id)` | Reanuda un workflow específico |
+
+#### CheckpointManager
+
+Gestiona el ciclo de vida de los checkpoints:
+
+```python
+@dataclass
+class Checkpoint:
+    id: str
+    entity_type: str          # "task" | "workflow"
+    entity_id: str
+    state: dict               # Estado serializable
+    created_at: datetime
+    metadata: dict
+```
+
+- Los checkpoints se almacenan en SQLite vía `ExecutionRepository`.
+- Se crea un checkpoint automático antes de cada transición de estado
+  crítica (`RUNNING → WAITING`, `COMPLETED`).
+- Al recuperar, se restaura el estado y se reanuda la ejecución
+  desde el punto guardado.
+
+#### ResilienceHelper
+
+Utilidades transversales para resiliencia:
+
+| Función | Descripción |
+|---|---|
+| `retry_with_backoff(coro, max_retries, base_delay)` | Reintento exponencial |
+| `circuit_breaker(fail_threshold, reset_timeout)` | Circuit breaker pattern |
+| `timeout_wrapper(coro, timeout)` | Timeout con cancelación limpia |
+
+#### Flujo de Recuperación
+
+```
+Reinicio del proceso
+  │
+  ▼
+RecoveryManager.recover_all()
+  │
+  ├─ Lista checkpoints en DB
+  ├─ Para cada checkpoint activo:
+  │     ├─ Restaurar estado
+  │     ├─ Reanudar tareas RUNNING → READY
+  │     ├─ Reanudar workflows en progreso
+  │     └─ Restaurar Scheduler jobs
+  │
+  ▼
+Sistema operativo con estado previo al reinicio
+```
+
+### 10.4 Observabilidad Avanzada
+
+Se extiende la observabilidad de Sprint 1.7 con dashboard interno,
+exportadores y tracking por entidad.
+
+#### Dashboard Snapshot
+
+```python
+metrics.dashboard_snapshot()
+# {
+#   "system": {
+#     "uptime_seconds": 3600,
+#     "total_tasks": 42,
+#     "active_tasks": 3,
+#     "total_workflows": 8,
+#     "scheduler_jobs_pending": 5,
+#   },
+#   "counters": { ... },
+#   "histograms": { ... },
+#   "recent_errors": [ ... ],
+#   "scheduler_status": { "running": true, "jobs": [...] },
+#   "recovery_status": { "checkpoints": 12, "last_recovery": "..." },
+# }
+```
+
+#### Exportadores
+
+| Exportador | Formato | Destino |
+|---|---|---|
+| `ConsoleExporter` | Texto tabulado | stdout (desarrollo) |
+| `JSONExporter` | JSON | Archivo o stdout |
+| `PrometheusExporter` | Prometheus text format | HTTP endpoint `/metrics` |
+
+Todos los exportadores implementan la interfaz `MetricsExporter` con
+el método `export(snapshot)`.
+
+#### Tracking por Entidad
+
+Las métricas ahora se pueden filtrar por entidad:
+
+```python
+metrics.get_entity_metrics("task", "t-123")
+# → Contadores, histogramas y auditoría específicos de esa tarea
+
+metrics.get_entity_metrics("workflow", "wf-456")
+# → Estado del workflow, duración, tareas hijas
+```
+
+### 10.5 Diagrama de Integración Actualizado
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          DESKTOP APP (WinUI 3)                      │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │ WebSocket + REST
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         BACKEND (FastAPI)                            │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                     ORCHESTRATOR (Core)                       │   │
+│  │                                                              │   │
+│  │  ┌────────────┐  ┌─────────────┐  ┌──────────────────────┐  │   │
+│  │  │  Pipeline   │  │  Planner    │  │   ToolExecutor       │  │   │
+│  │  │  (11 stages)│  │  (heuristic)│  │  (keyed by exec_id)  │  │   │
+│  │  └──────┬─────┘  └──────┬──────┘  └──────────┬───────────┘  │   │
+│  │         │               │                     │              │   │
+│  │  ┌──────┴───────────────┴─────────────────────┴──────────┐  │   │
+│  │  │                  TASK MANAGER                          │  │   │
+│  │  │  ┌──────────┐  ┌───────────┐  ┌───────────────────┐  │  │   │
+│  │  │  │  Tasks    │  │ Workflows │  │  SCHEDULER        │  │  │   │
+│  │  │  │  (7 st.)  │  │  (DAGs)   │  │  (once/periodic/  │  │  │   │
+│  │  │  └────┬─────┘  └─────┬─────┘  │   retry)          │  │  │   │
+│  │  │       │              │        └────────┬──────────┘  │  │   │
+│  │  └───────┼──────────────┼─────────────────┼─────────────┘  │   │
+│  └──────────┼──────────────┼─────────────────┼────────────────┘   │
+│             │              │                 │                      │
+│  ┌──────────┼──────────────┼─────────────────┼────────────────┐   │
+│  │          ▼              ▼                 ▼                │   │
+│  │              PERSISTENCIA (SQLite)                          │   │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌───────────────────┐  │   │
+│  │  │ TaskRepo     │ │ WorkflowRepo │ │ ExecutionRepo     │  │   │
+│  │  │              │ │              │ │ + Checkpoints     │  │   │
+│  │  └──────────────┘ └──────────────┘ └───────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                  OBSERVABILIDAD                            │   │
+│  │  ┌──────────────┐ ┌─────────────┐ ┌───────────────────┐  │   │
+│  │  │MetricsCollect│ │ Structured  │ │ RecoveryManager    │  │   │
+│  │  │+ Dashboard   │ │ Logger      │ │ + CheckpointMgr    │  │   │
+│  │  │+ Exporters   │ │             │ │ + ResilienceHelper │  │   │
+│  │  └──────────────┘ └─────────────┘ └───────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │  Agents    │  │   Memory     │  │   Tools      │             │
+│  │  Registry  │  │  Manager     │  │  Registry    │             │
+│  └────────────┘  └──────────────┘  └──────────────┘             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 10.6 Deuda Técnica
+
+La deuda técnica identificada y resuelta en este sprint está
+documentada en detalle en `docs/technical-debt.md`. Los ítems
+principales resueltos son:
+
+| Ítem | Estado | Detalle |
+|---|---|---|
+| `ToolExecutor._active_tasks` keyed por nombre | ✅ Resuelto | Ahora keyed por `execution_id` |
+| `PermissionMode` inconsistente entre enums y config | ✅ Resuelto | Unificado en `packages/shared/src/enums.py` |
+| Métricas se pierden al reiniciar | ⚠️ Mitigado | Exportadores disponibles; persistencia parcial |
+| Tests de aislamiento | ⚠️ Mitigado | 70 nuevos tests de integración |

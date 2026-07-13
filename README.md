@@ -3,7 +3,7 @@
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
 **Versión:** `v0.2.0`
-**Estado:** Sprint 1.7 — Orchestrator Avanzado
+**Estado:** Sprint 1.8 — Integración Total, Persistencia, Scheduler y Resiliencia
 
 ---
 
@@ -68,7 +68,7 @@ Liz-coder-plus/
 
 ## Cómo ejecutar el proyecto
 
-> Esta versión `v0.1.1` corresponde al Sprint 1 — Prompt 1.
+> Esta versión `v0.2.0` corresponde al Sprint 1.8 — Integración Total, Persistencia, Scheduler y Resiliencia.
 > Solo se establecen los cimientos. Aún no hay UI final ni modelos IA conectados.
 
 ### Requisitos previos
@@ -144,6 +144,14 @@ dotnet run
 - PermissionService con evaluate_tool() level-aware y audit log.
 - 3 herramientas base: FileTool, SystemTool, TerminalTool.
 - 225 tests unitarios pasando.
+
+### Sprint 1.8 — Integración Total, Persistencia, Scheduler y Resiliencia ✅
+- Persistencia SQLite para Tasks, Workflows y Execution History.
+- Scheduler con soporte para tareas futuras, periódicas y reintentos.
+- Sistema de Recovery con checkpoints y reanudación tras reinicios.
+- Observabilidad avanzada con dashboard interno y exportadores.
+- Eliminación de deuda técnica (ToolExecutor keyed por execution_id, PermissionMode consistente).
+- 70 nuevos tests de integración.
 
 ### Sprint 2 — Agente Conversacional
 - Primer agente conversacional con IA real.
