@@ -133,12 +133,12 @@ async def stage_validate_request(
     """
     if not isinstance(req.message, str) or not req.message.strip():
         raise PipelineError(
-            "validate_request", "validation",
+            "stage_validate_request", "validation",
             "Message must be a non-empty string.",
         )
     if not isinstance(req.session_id, str) or not req.session_id.strip():
         raise PipelineError(
-            "validate_request", "validation",
+            "stage_validate_request", "validation",
             "session_id must be a non-empty string.",
         )
     valid_modes = {"confirmation", "automatic"}
@@ -277,7 +277,7 @@ async def stage_execute_agent(
             (time.monotonic() - start) * 1000
         )
         raise PipelineError(
-            "execute_agent", "timeout",
+            "stage_execute_agent", "timeout",
             f"Agent exceeded {orch.agent_timeout}s",
         ) from exc
     except (ValueError, TypeError) as exc:
@@ -285,14 +285,14 @@ async def stage_execute_agent(
             (time.monotonic() - start) * 1000
         )
         raise PipelineError(
-            "execute_agent", "validation", str(exc),
+            "stage_execute_agent", "validation", str(exc),
         ) from exc
     except Exception as exc:  # noqa: BLE001
         req.metadata["agent_duration_ms"] = int(
             (time.monotonic() - start) * 1000
         )
         raise PipelineError(
-            "execute_agent", "unexpected", str(exc),
+            "stage_execute_agent", "unexpected", str(exc),
         ) from exc
 
     req.response = response_text
