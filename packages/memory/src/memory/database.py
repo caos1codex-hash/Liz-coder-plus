@@ -153,6 +153,17 @@ class DatabaseManager:
             logger.warning("Migration file not found: %s", migration_file)
             return
 
-        sql = migration_file.read_text(encoding="utf-8")
-        await self.execute_script(sql)
+        try:
+            sql = migration_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot read migration file {migration_file}: {exc}"
+            ) from exc
+
+        try:
+            await self.execute_script(sql)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Migration {migration_name} failed: {exc}"
+            ) from exc
         logger.info("Migration applied: %s", migration_name)

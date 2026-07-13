@@ -26,9 +26,18 @@ class ConversationRepository:
     table with session_id, role, content, timestamp, and JSON metadata.
     """
 
+    _VALID_ROLES = ("user", "assistant", "system")
+
     def __init__(self, database_manager: DatabaseManager) -> None:
         self._db = database_manager
         logger.info("ConversationRepository created")
+
+    def _validate_role(self, role: str) -> None:
+        """Raise ValueError if role is not a valid conversation role."""
+        if role not in self._VALID_ROLES:
+            raise ValueError(
+                f"Invalid role '{role}'. Must be one of: {self._VALID_ROLES}"
+            )
 
     async def save_message(
         self,
@@ -51,6 +60,8 @@ class ConversationRepository:
         now = datetime.now(timezone.utc).isoformat()
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
 
+        self._validate_role(role)
+
         conn = await self._db.connection()
         cursor = await conn.execute(
             "INSERT INTO conversations (session_id, role, content, created_at, metadata) "
@@ -60,6 +71,8 @@ class ConversationRepository:
         await conn.commit()
 
         row_id = cursor.lastrowid
+        if row_id is None:
+            raise RuntimeError("Failed to insert message: no row id returned")
         logger.debug(
             "Saved message: session=%s role=%s id=%d", session_id, role, row_id
         )

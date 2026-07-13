@@ -138,7 +138,19 @@ class MemoryManager:
         if not self._initialized:
             raise RuntimeError("MemoryManager not initialized")
 
-        assert self._repo is not None  # noqa: S101
+        if self._repo is None:
+            raise RuntimeError("MemoryManager repository not available")
+
+        # Validate role.
+        valid_roles = ("user", "assistant", "system")
+        if role not in valid_roles:
+            raise ValueError(
+                f"Invalid role '{role}'. Must be one of: {valid_roles}"
+            )
+
+        # Validate content is not empty.
+        if not content.strip():
+            raise ValueError("Message content must not be empty")
 
         # Persist to SQLite.
         row_id = await self._repo.save_message(
@@ -202,7 +214,9 @@ class MemoryManager:
             return cached[-effective_limit:] if effective_limit < len(cached) else cached
 
         # Cold cache: load from SQLite.
-        assert self._repo is not None  # noqa: S101
+        if self._repo is None:
+            raise RuntimeError("MemoryManager repository not available")
+
         history = await self._repo.get_session_history(session_id, limit=effective_limit)
 
         # Warm the cache.
@@ -224,7 +238,8 @@ class MemoryManager:
         if not self._initialized:
             raise RuntimeError("MemoryManager not initialized")
 
-        assert self._repo is not None  # noqa: S101
+        if self._repo is None:
+            raise RuntimeError("MemoryManager repository not available")
 
         # Remove from SQLite.
         deleted = await self._repo.delete_session(session_id)
