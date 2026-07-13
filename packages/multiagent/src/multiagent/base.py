@@ -261,6 +261,21 @@ class BaseAgent(ABC):
     def last_error(self) -> str | None:
         return self._last_error
 
+    @property
+    def tasks_total(self) -> int:
+        """Total de tareas procesadas."""
+        return self._tasks_total
+
+    @property
+    def tasks_ok(self) -> int:
+        """Tareas completadas con éxito."""
+        return self._tasks_ok
+
+    @property
+    def tasks_failed(self) -> int:
+        """Tareas fallidas."""
+        return self._tasks_failed
+
     # ------------------------------------------------------------------
     # Permisos
     # ------------------------------------------------------------------

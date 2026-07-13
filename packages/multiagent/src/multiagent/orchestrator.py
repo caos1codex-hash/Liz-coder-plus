@@ -289,16 +289,20 @@ class AgentOrchestrator:
     def _select_agent(self, task: Task) -> BaseAgent | None:
         """Heurística simple para elegir agente.
 
-        - Si `task.agent_name` está seteado y existe, lo usa.
+        - Si `task.agent_name` está seteado: debe existir y no estar
+          detenido. Si no existe, devuelve None (falla el dispatch).
         - Si el payload tiene `kind`, busca un agente con ese `kind`
           en sus objectives.
         - Sino, devuelve el primer agente IDLE.
         """
-        # 1. Asignación explícita
+        # 1. Asignación explícita (estricta: si no existe, fallar)
         if task.agent_name:
             agent = self._agents.get(task.agent_name)
             if agent and not agent.is_stopped:
                 return agent
+            # Si el nombre está seteado pero no existe o está parado,
+            # no hacer fallback: fallar explícitamente.
+            return None
         # 2. Por kind en payload
         kind = task.payload.get("kind") if task.payload else None
         if kind:
