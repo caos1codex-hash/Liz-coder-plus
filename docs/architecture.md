@@ -1,7 +1,7 @@
 # Arquitectura — Liz Coder Plus
 
 > Visión general de la arquitectura del proyecto.
-> Versión: `v0.1.1` — Sprint 1 - Prompt 3 (Persistent Memory).
+> Versión: `v0.1.2` — Sprint 1.4 (Stabilization).
 
 ## 1. Visión general
 
@@ -158,3 +158,118 @@ entre el backend y el core.
 - **Sprint 4:** UI desktop con chat.
 - **Sprint 5:** integración real con modelos IA.
 - **Sprint 6+:** voz, imágenes, control avanzado del PC.
+
+## 6. Sistema de Memoria — Detalle Técnico
+
+### 6.1 Componentes
+
+El sistema de memoria se implementa en `packages/memory/src/memory/` y
+consta de cuatro componentes con responsabilidades bien definidas:
+
+```
+MemoryManager (API pública)
+    ├── add_message(session_id, role, content, metadata)
+    ├── get_context(session_id, limit?) -> list[dict]
+    ├── clear_session(session_id) -> bool
+    └── close()
+        │
+        ▼
+ConversationRepository (acceso a datos)
+    ├── save_message(session_id, role, content, metadata) -> int
+    ├── get_session_history(session_id, limit?) -> list[dict]
+    ├── delete_session(session_id) -> bool
+    └── count_messages(session_id) -> int
+        │
+        ▼
+DatabaseManager (conexión SQLite)
+    ├── initialize()
+    ├── connection() -> Connection
+    ├── execute(sql, params) -> Cursor
+    ├── execute_script(sql)
+    └── close()
+        │
+        ▼
+SQLite (tabla conversations + índices)
+```
+
+### 6.2 Flujo de Datos Completo
+
+```
+Usuario
+  │
+  ▼  WebSocket JSON
+Backend FastAPI (/ws/chat)
+  │
+  ▼  Validación con WebSocketChatRequest (Pydantic)
+Orchestrator.handle_message()
+  │
+  ├─→ SessionManager.append_turn(role="user", ...)
+  │       │
+  │       ├─→ RAM cache (list[ChatTurn])
+  │       └─→ MemoryManager.add_message() ──→ SQLite (si adjuntado)
+  │
+  ▼  AgentRouter.route(message, context)
+Agente (EchoAgent / futuro LLM)
+  │
+  ▼  response_text
+Orchestrator
+  │
+  ├─→ SessionManager.append_turn(role="assistant", ...)
+  │       │
+  │       ├─→ RAM cache
+  │       └─→ MemoryManager.add_message() ──→ SQLite
+  │
+  ▼  Envelope dict {type, content, status, session_id}
+WebSocket → Cliente Desktop
+```
+
+### 6.3 Inicialización en el Backend
+
+Durante el `lifespan` de FastAPI (`apps/backend/src/api/main.py`),
+se ejecuta `_initialize_memory()` que:
+
+1. Lee `config/development.json` → sección `memory`.
+2. Si `memory.enabled == true`, crea un `MemoryManager`.
+3. Inicializa la base de datos SQLite en `memory.path`.
+4. Llama a `orchestrator.attach_memory(mm)`, que también
+   adjunta el memory al `SessionManager`.
+
+Si la inicialización falla (por ejemplo, sin `aiosqlite`), el sistema
+continúa funcionando con sesiones en RAM únicamente.
+
+### 6.4 Validaciones Implementadas (Sprint 1.4)
+
+| Componente | Validación |
+|---|---|
+| `MemoryManager.add_message()` | Revisa que role ∈ {user, assistant, system}; que content no sea vacío. |
+| `ConversationRepository.save_message()` | Valida role contra `_VALID_ROLES`. |
+| `ConversationRepository` | Verifica que `lastrowid` no sea None tras INSERT. |
+| `DatabaseManager._run_migration()` | Captura `OSError` al leer archivos y errores SQL al ejecutar. |
+| `Orchestrator.handle_message()` | Separa `ValueError/TypeError` (validación) de errores inesperados. |
+
+### 6.5 Código Muerto Documentado
+
+Los siguientes archivos existen como esqueletos para futuros sprints
+y NO deben ser eliminados sin considerar el roadmap:
+
+| Archivo | Estado | Sprint Previsto |
+|---|---|---|
+| `packages/memory/src/base.py` | Protocol genérico, sin consumidores aún | Sprint 3 |
+| `packages/memory/src/models.py` | Modelos SQLAlchemy, reservados para migraciones complejas | Sprint 3 |
+| `packages/memory/src/sqlite.py` | Implementación SQLAlchemy, reservada como alternativa | Sprint 3 |
+| `packages/agents/` | Paquete completo, sin uso | Sprint 2 |
+| `packages/tools/` | Paquete completo, sin uso | Sprint 3 |
+| `apps/backend/src/core/orchestrator.py` | Stub, reemplazado por `packages/core/` | Eliminar en Sprint 2 |
+| `apps/backend/src/events/bus.py` | EventBus, sin instanciar | Sprint 3 |
+
+### 6.6 Cómo Extender el Sistema de Memoria
+
+Para agregar un nuevo backend de almacenamiento (ej. PostgreSQL):
+
+1. Crear una clase en `packages/memory/src/memory/` que implemente los
+   mismos métodos que `ConversationRepository`.
+2. Crear un `DatabaseManager` alternativo o extender el existente.
+3. Actualizar `MemoryManager.initialize()` para soportar el nuevo
+   proveedor según `config.memory.provider`.
+4. El `SessionManager` no necesita cambios porque interactúa
+   exclusivamente a través de `MemoryManager`.
