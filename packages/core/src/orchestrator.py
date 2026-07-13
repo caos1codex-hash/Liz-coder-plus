@@ -23,6 +23,8 @@ from src.events import (
     AGENT_COMPLETED,
     AGENT_FAILED,
     AGENT_INVOKED,
+    SYSTEM_STARTED,
+    SYSTEM_STOPPED,
     TOOL_REQUESTED,
     USER_MESSAGE_RECEIVED,
 )
@@ -33,6 +35,10 @@ from src.ws_manager import WebSocketManager
 
 if TYPE_CHECKING:
     from src.memory.manager import MemoryManager
+
+    # Lazy import to avoid hard dependency on agents package.
+    # BaseAgent lifecycle is used when available.
+    from src.base import BaseAgent as BaseAgentClass
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,9 @@ class Orchestrator:
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
         self._agents[default.name] = default
+
+        self._initialized = False
+        self._shutdown = False
 
         logger.info(
             "Orchestrator initialized (ws=%d sessions=%d agents=%d "
@@ -170,6 +179,102 @@ class Orchestrator:
         self._memory = memory
         self._sessions.attach_memory(memory)
         logger.info("Persistent memory connected to Orchestrator")
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def initialize(self) -> None:
+        """Initialize all registered agents and the orchestrator.
+
+        Transitions the orchestrator from CREATED to ACTIVE state.
+        Agents that have an ``initialize()`` method (BaseAgent subclasses)
+        are initialized. Errors in individual agents are logged but do
+        not prevent other agents from initializing.
+
+        Emits ``system.started`` event.
+        """
+        if self._initialized:
+            logger.warning("Orchestrator already initialized")
+            return
+
+        initialized_count = 0
+        for name, agent in self._agents.items():
+            if hasattr(agent, "initialize") and callable(agent.initialize):
+                try:
+                    await agent.initialize()
+                    initialized_count += 1
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to initialize agent '%s'", name
+                    )
+
+        self._initialized = True
+        await self._emit(SYSTEM_STARTED, {
+            "agents": list(self._agents.keys()),
+            "agents_initialized": initialized_count,
+            "tools": list(self._tools.keys()),
+        })
+        logger.info(
+            "Orchestrator started (%d/%d agents initialized)",
+            initialized_count,
+            len(self._agents),
+        )
+
+    async def shutdown(self) -> None:
+        """Shut down the orchestrator and all agents.
+
+        Safe to call multiple times. Shuts down all agents that
+        have a ``shutdown()`` method (BaseAgent subclasses).
+
+        Emits ``system.stopped`` event.
+        """
+        if self._shutdown:
+            return
+
+        shutdown_count = 0
+        for name, agent in self._agents.items():
+            if hasattr(agent, "shutdown") and callable(agent.shutdown):
+                try:
+                    await agent.shutdown()
+                    shutdown_count += 1
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Failed to shut down agent '%s'", name
+                    )
+
+        self._shutdown = True
+        await self._emit(SYSTEM_STOPPED, {
+            "agents_shutdown": shutdown_count,
+        })
+        logger.info(
+            "Orchestrator stopped (%d agents shut down)",
+            shutdown_count,
+        )
+
+    @property
+    def is_initialized(self) -> bool:
+        """Whether the orchestrator has been initialized."""
+        return self._initialized
+
+    @property
+    def is_shutdown(self) -> bool:
+        """Whether the orchestrator has been shut down."""
+        return self._shutdown
+
+    def agent_status(self) -> dict[str, dict[str, Any]]:
+        """Return status info for all registered agents.
+
+        For BaseAgent subclasses, returns their full metadata.
+        For plain Protocol-satisfying objects, returns basic info.
+        """
+        result = {}
+        for name, agent in self._agents.items():
+            if hasattr(agent, "metadata"):
+                result[name] = agent.metadata
+            else:
+                result[name] = {"name": name, "type": type(agent).__name__}
+        return result
 
     # ------------------------------------------------------------------
     # Event helpers
