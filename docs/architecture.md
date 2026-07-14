@@ -1549,3 +1549,206 @@ clave:
 | Estimación heurística de tokens | Evita dependencia pesada (tiktoken) en el MVP; se mejorará en Sprint 2.0. |
 | PromptPipeline separado del ContextManager | Responsabilidad única: uno construye, el otro recorta. |
 | Caché en ModelManager | Evita llamadas duplicadas al mismo modelo con el mismo prompt. |
+
+## 12. Sprint 2.1 — Arquitectura Multi-Agent
+
+> Documentación completa: [`docs/sprint-2.1-multi-agent-report.md`](sprint-2.1-multi-agent-report.md)
+> y [`docs/sprint-2.1-diagrams.md`](sprint-2.1-diagrams.md).
+
+Sprint 2.1 introduce una **arquitectura profesional basada en agentes**
+en `packages/multiagent/`. Es una **capa paralela** al `Orchestrator`
+de Sprint 1: no reemplaza código existente, añade una nueva capa
+lista para integrarse mediante adaptadores.
+
+### 12.1 Componentes
+
+- **`BaseAgent`** (abstracta) — identidad, permisos, memoria, herramientas,
+  objetivos, lifecycle (`start/stop/pause/resume/execute/health/serialize`).
+- **`AgentOrchestrator`** — registro, dispatch, broadcast, pause/resume
+  global, health check, métricas, heartbeat.
+- **`MessageBus`** — pub/sub async entre agentes con broadcast y pending.
+- **`PriorityQueue`** — cola de tareas con estados
+  queued/running/paused/completed/failed/cancelled y retry.
+- **`AgentMemory`** — memoria corta (deque) + larga (LRU) + embeddings
+  (cosine similarity, sin dependencias externas).
+- **`AgentLogger`** — logs estructurados (start/end/error/tool/metric)
+  con duration_ms, memory_kb, tokens, tools_used.
+- **`MultiAgentConfig`** — config inmutable (max_agents, timeouts,
+  retry, heartbeat, capacidades).
+
+### 12.2 Agentes concretos
+
+| Agente | Responsabilidad |
+|---|---|
+| `PlannerAgent` | Divide tareas, estima dificultad, prioriza (heurística por patrones). |
+| `CoderAgent` | Escribe, refactoriza, corrige y genera tests. |
+| `ReviewerAgent` | Detecta malas prácticas, seguridad, performance, calidad. |
+| `ResearchAgent` | Investiga, busca APIs, resume (con fetch HTTP opcional). |
+| `TerminalAgent` | Ejecuta comandos con allowlist + bloqueo de tokens peligrosos. |
+| `GitAgent` | Commits, ramas, merges, push, pull (force requiere UNRESTRICTED). |
+| `MemoryAgent` | Memoria corta/larga, embeddings, recuperación contextual. |
+
+### 12.3 Compatibilidad con Sprint 1
+
+| Sprint 1 | Sprint 2.1 | Relación |
+|---|---|---|
+| `packages/agents/src/base.py::BaseAgent` | `packages/multiagent/src/multiagent/base.py::BaseAgent` | Coexisten (interfaces distintas) |
+| `packages/core/src/orchestrator.py::Orchestrator` | `packages/multiagent/src/multiagent/orchestrator.py::AgentOrchestrator` | Coexisten |
+| `packages/core/src/task.py::Task/TaskManager` | `packages/multiagent/src/multiagent/queue.py::Task/PriorityQueue` | Coexisten |
+| `packages/core/src/event_bus.py::EventBus` | `packages/multiagent/src/multiagent/messages.py::MessageBus` | Coexisten |
+
+Los 43+ tests de Sprint 1 verificados siguen pasando sin cambios.
+
+
+## 13. Sprint 2.2 — Collaborative Multi-Agent Execution
+
+> Documentación completa: [`docs/sprint-2.2-collaborative-agents-report.md`](sprint-2.2-collaborative-agents-report.md)
+> y [`docs/sprint-2.2-diagrams.md`](sprint-2.2-diagrams.md).
+
+Sprint 2.2 transforma los agentes en un **equipo colaborativo**. El
+`WorkflowOrchestrator` coordina workflows completos entre varios
+agentes, con DAG de dependencias, ejecución paralela, failover
+automático, contexto compartido y observabilidad completa.
+
+### 13.1 Componentes nuevos
+
+- **`WorkflowEngine`** — motor que ejecuta workflows respetando el DAG,
+  con paralelismo configurable y failover (retry/reassign/skip/cancel).
+- **`Workflow` / `Step`** — modelos de datos con todos los campos de
+  la especificación (id, name, status, retry, timeout, depends_on, etc.).
+- **`DAG`** — grafo acíclico con `validate()` (ciclos, deps rotas,
+  huérfanos), `topological_order()`, `ready_steps()`, `ancestors()`,
+  `descendants()`, `subgraph()`.
+- **`EventBus`** — bus **pub/sub de eventos del sistema**, separado del
+  `MessageBus` (punto-a-punto). Historial, métricas, filtros, aislamiento.
+- **`ContextManager`** — contexto compartido: objetivos, archivos (con
+  SHA-256), snippets de código, variables, mensajes, memoria. Soporta
+  `transfer_context` entre agentes.
+- **`Scheduler`** — decide qué step, qué agente y cuándo. Respeta
+  `max_parallel_steps` y `max_parallel_agents`.
+- **`LoadBalancer`** — scoring ponderado (estado, CPU, RAM, cola,
+  especialidad, historial) con pesos normalizables.
+- **`MetricsCollector`** — suscrito al EventBus, construye histograms
+  (p50/p95/p99) de workflow_duration, step_duration, queue_time, y
+  contadores de parallelism, agent_usage, retry_count, success_rate.
+- **`WorkflowOrchestrator`** — API unificada que combina
+  `AgentOrchestrator` (Sprint 2.1) + `WorkflowEngine` (Sprint 2.2).
+  Métodos de coordinación: `delegate`, `request_help`,
+  `transfer_context`, `wait_for`, `cancel_workflow`, `resume_workflow`.
+- **API REST** (FastAPI) — endpoints `/workflows`, `/workflows/{id}`,
+  `/steps`, `/events`, `/metrics/workflows`, `/metrics/agents`.
+
+### 13.2 PlannerAgent extendido
+
+Con `payload['op'] = 'plan_workflow'`, el `PlannerAgent` genera un
+`Workflow` completo con DAG y estimaciones de tokens, duración y
+parallelismo. Patrones: file_op, terminal, research, system, review.
+
+### 13.3 Failover
+
+Orden de acciones cuando un step falla:
+
+1. **RETRY** si `step.retry < max_retries`.
+2. **REASSIGN** si `reassign_on_fail` y no se han agotado los reassigns.
+3. **SKIP** si `criticality == OPTIONAL` y `skip_optional_on_fail`.
+4. **CANCEL** si `criticality == REQUIRED` y `cancel_on_required_fail`.
+
+El SKIP se propaga en cadena a los dependientes.
+
+### 13.4 Compatibilidad
+
+| Sprint 2.1 | Sprint 2.2 | Relación |
+|---|---|---|
+| `AgentOrchestrator` | `WorkflowOrchestrator` (envuelve al anterior) | Compatibles |
+| `MessageBus` | `EventBus` (separado) | Coexisten |
+| 7 agentes concretos | `PlannerAgent` extendido | 100% compatible |
+
+Los **130 tests de Sprint 2.1** siguen pasando sin cambios.
+
+## 14. Sprint 2.2/2 — Refinamiento: Agent Registry + Capabilities
+
+> Documentación completa: [`docs/sprint-2.2-2-agent-registry-report.md`](sprint-2.2-2-agent-registry-report.md)
+> y [`docs/sprint-2.2-2-diagrams.md`](sprint-2.2-2-diagrams.md).
+
+Sprint 2.2/2 elimina dependencias rígidas entre Scheduler, Workflow
+Engine y agentes. Los agentes dejan de identificarse únicamente por
+nombre y pasan a ser **descubiertos, registrados y seleccionados
+automáticamente** según sus **capabilities**.
+
+### 14.1 Componentes nuevos
+
+- **`AgentRegistry`** — registro único de agentes. Métodos
+  `register/unregister/replace/discover/get/get_all/exists/health/metrics`.
+  Auto-discovery via hooks. Health con heartbeat, uptime, usage.
+- **`AgentRecord`** — wrapper con id/name/version/capabilities/priority/
+  status/metadata/created_at/last_seen/last_heartbeat/health/errors/usage.
+- **`Capability`** (inmutable, jerárquica con dots, wildcards `*`).
+- **`CapabilityRegistry`** — catálogo de 34 capabilities estándar en
+  10 categorías (planning, workflow, code.*, git.*, terminal.execute,
+  filesystem.*, memory.*, web.search, documentation.lookup, research.*).
+- **`CapabilityResolver`** — selección inteligente por scoring ponderado
+  (specialty + priority + cost + history + load + latency).
+- **`BackwardCompatibilityAdapter`** — traduce nombres legacy
+  (PlannerAgent, CoderAgent, etc.) y actions (refactor, review, etc.)
+  a capabilities. Ningún workflow existente se rompe.
+- **`RegistryAwareScheduler`** — scheduler que usa el resolver en lugar
+  del LoadBalancer directo. Hereda de `Scheduler` (Sprint 2.2).
+
+### 14.2 Eventos nuevos
+
+`agent.registered`, `agent.removed`, `agent.health.changed`,
+`capability.resolved`, `capability.miss`, `scheduler.selected_agent`.
+
+### 14.3 Verificación: nada depende de clases concretas
+
+El `RegistryAwareScheduler` no recibe agentes por nombre; los obtiene
+del `AgentRegistry` vía `CapabilityResolver`. El
+`BackwardCompatibilityAdapter` traduce workflows legacy automáticamente.
+Ningún componente del workflow engine acopla a una clase concreta de
+agente.
+
+### 14.4 Compatibilidad
+
+| Componente anterior | Nuevo componente | Relación |
+|---|---|---|
+| `AgentOrchestrator` (Sprint 2.1) | `AgentRegistry` | Coexisten; registry es fuente de verdad |
+| `Scheduler` (Sprint 2.2) | `RegistryAwareScheduler` | Hereda; se puede usar cualquiera |
+| `LoadBalancer` (Sprint 2.2) | `CapabilityResolver` | Coexisten; resolver usa scoring más rico |
+| Workflows con `step.agent="CoderAgent"` | `BackwardCompatibilityAdapter` | Traduce automáticamente |
+
+Los **248 tests de Sprint 2.1+2.2** siguen pasando sin cambios.
+
+## 15. Sprint 2.3 — Agent Lifecycle & Registry Integration
+
+> Documentación completa: [`docs/sprint-2.3-agent-lifecycle-report.md`](sprint-2.3-agent-lifecycle-report.md).
+
+Sprint 2.3 convierte el sistema de agentes en una arquitectura profesional
+con registry robusto, manifest declarativo, ciclo de vida profesional y
+orchestrator desacoplado por capabilities.
+
+### 15.1 Componentes nuevos
+
+- **`AgentManifest`** (`registry/manifest.py`) — contrato declarativo inmutable
+  (id/name/version/description/capabilities/priority/metadata). Validaciones
+  de formato (ID lowercase, version semver, no caps duplicadas, priority >= 0).
+  `standard_manifests()` devuelve 7 manifests para los agentes de Sprint 2.1.
+- **`LifecycleManager`** (`registry/lifecycle.py`) — wrapper no intrusivo sobre
+  `BaseAgent` con estados CREATED → INITIALIZING → READY ⇄ RUNNING → STOPPED,
+  ERROR recuperable. Métodos `initialize()`, `start()`, `stop()`, `mark_error()`,
+  `recover()`, `health_check()`.
+- **`RegistryOrchestrator`** (`registry/orchestrator.py`) — orchestrator
+  desacoplado que no conoce clases concretas. `request(capability, task)`
+  resuelve vía `CapabilityResolver`, ejecuta con lifecycle, y registra usage.
+  `bootstrap()` registra 7 agentes estándar con manifests.
+
+### 15.2 API simplificada del AgentRegistry
+
+Métodos nuevos: `register_simple`, `register_with_manifest`, `list_agents`,
+`list_manifests`, `find_by_capability_simple`, `find_manifests_by_capability`.
+
+### 15.3 Compatibilidad
+
+- `AgentOrchestrator` (Sprint 2.1) sigue funcionando sin cambios.
+- `WorkflowOrchestrator` y `WorkflowEngine` (Sprint 2.2) coexisten.
+- Los 334 tests de Sprint 2.1+2.2 siguen pasando.
+- 100 tests nuevos añadidos en `tests/agents/`.
