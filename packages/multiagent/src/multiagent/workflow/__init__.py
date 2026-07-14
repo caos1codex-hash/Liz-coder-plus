@@ -1,4 +1,4 @@
-"""Workflow engine subpackage (Sprint 2.2).
+"""Workflow engine subpackage (Sprint 2.2 / 2.4).
 
 Public API:
 
@@ -11,6 +11,13 @@ Public API:
 - `LoadBalancer` — distribución de carga por estado/CPU/RAM/cola.
 - `WorkflowOrchestrator` — combina el AgentOrchestrator de Sprint 2.1
   con el WorkflowEngine.
+
+Sprint 2.4 additions:
+
+- `TaskPipelineEngine` — motor basado en capacidades (via AgentRegistry).
+- `TaskRequest`, `TaskResult` — modelos estandarizados de comunicación.
+- `WorkflowStepDef`, `StepRetryPolicy` — definición de steps con capabilities.
+- `PipelineWorkflow`, `PipelineExecutionResult` — workflow y resultado.
 """
 
 from __future__ import annotations
@@ -31,6 +38,14 @@ from .load_balancer import LoadBalancer
 from .models import Step, Workflow
 from .scheduler import Scheduler
 from .orchestrator import WorkflowOrchestrator
+from .pipeline_models import (
+    PipelineWorkflow,
+    StepRetryPolicy,
+    TaskRequest,
+    TaskResult,
+    WorkflowStepDef,
+)
+from .task_pipeline_engine import PipelineExecutionResult, TaskPipelineEngine
 
 __all__ = [
     "CodeSnippet",
@@ -43,16 +58,23 @@ __all__ = [
     "FailoverAction",
     "FileSnapshot",
     "LoadBalancer",
+    "PipelineExecutionResult",
+    "PipelineWorkflow",
     "Scheduler",
     "SharedMessage",
     "Step",
     "StepCriticality",
+    "StepRetryPolicy",
     "StepStatus",
+    "TaskPipelineEngine",
+    "TaskRequest",
+    "TaskResult",
     "ValidationResult",
     "Workflow",
     "WorkflowEngine",
     "WorkflowEvent",
     "WorkflowOrchestrator",
     "WorkflowStatus",
+    "WorkflowStepDef",
     "can_transition_step",
 ]
