@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Sprint 2.3 — Agent Lifecycle & Registry Integration
+
+### Added
+- **`AgentManifest`** (`registry/manifest.py`): contrato declarativo inmutable
+  con validaciones (ID lowercase, version semver, no caps duplicadas,
+  priority >= 0). `standard_manifests()` devuelve 7 manifests para los
+  agentes de Sprint 2.1.
+- **`LifecycleManager`** (`registry/lifecycle.py`): wrapper no intrusivo sobre
+  `BaseAgent` con estados CREATED → INITIALIZING → READY ⇄ RUNNING → STOPPED,
+  ERROR recuperable. Métodos `initialize()`, `start()`, `stop()`,
+  `mark_error()`, `recover()`, `health_check()` (devuelve `LifecycleHealth`).
+- **`RegistryOrchestrator`** (`registry/orchestrator.py`): orchestrator
+  desacoplado que no conoce clases concretas. `bootstrap()` registra 7
+  agentes estándar con manifests. `request(capability, task)` resuelve vía
+  `CapabilityResolver`, ejecuta con lifecycle, registra usage.
+- **API simplificada del `AgentRegistry`**: `register_simple`,
+  `register_with_manifest`, `list_agents`, `list_manifests`,
+  `find_by_capability_simple`, `find_manifests_by_capability`.
+- **Documentación**: `docs/sprint-2.3-agent-lifecycle-report.md` con
+  diagramas Mermaid (arquitectura, flujo request→agent, lifecycle).
+- **Tests**: 100 nuevos en `tests/agents/` (test_manifest, test_lifecycle,
+  test_registry, test_discovery).
+
+### Fixed
+- `AgentOrchestrator.register_agent` ahora usa duck-typing (hasattr) en
+  lugar de `isinstance` para ser robusto frente a re-imports del módulo.
+- `AgentRegistry.list_manifests` usa duck-typing para validar manifests
+  devueltos por `agent.manifest()`.
+- `RegistryOrchestrator.request` sincroniza el lifecycle antes de `start()`
+  para que `started_count` incremente correctamente en ejecuciones múltiples.
+
+### Compatibilidad
+- Sprint 2.1+2.2: 334/334 tests siguen pasando.
+- Sprint 1: 56+ tests verificados siguen pasando.
+- `AgentOrchestrator`, `WorkflowOrchestrator` y `WorkflowEngine` coexisten
+  sin cambios.
+
 ## [Unreleased] — Sprint 2.2/2 — Agent Registry + Capabilities Refinement
 
 ### Added

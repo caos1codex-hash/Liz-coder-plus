@@ -1717,3 +1717,38 @@ agente.
 | Workflows con `step.agent="CoderAgent"` | `BackwardCompatibilityAdapter` | Traduce automáticamente |
 
 Los **248 tests de Sprint 2.1+2.2** siguen pasando sin cambios.
+
+## 15. Sprint 2.3 — Agent Lifecycle & Registry Integration
+
+> Documentación completa: [`docs/sprint-2.3-agent-lifecycle-report.md`](sprint-2.3-agent-lifecycle-report.md).
+
+Sprint 2.3 convierte el sistema de agentes en una arquitectura profesional
+con registry robusto, manifest declarativo, ciclo de vida profesional y
+orchestrator desacoplado por capabilities.
+
+### 15.1 Componentes nuevos
+
+- **`AgentManifest`** (`registry/manifest.py`) — contrato declarativo inmutable
+  (id/name/version/description/capabilities/priority/metadata). Validaciones
+  de formato (ID lowercase, version semver, no caps duplicadas, priority >= 0).
+  `standard_manifests()` devuelve 7 manifests para los agentes de Sprint 2.1.
+- **`LifecycleManager`** (`registry/lifecycle.py`) — wrapper no intrusivo sobre
+  `BaseAgent` con estados CREATED → INITIALIZING → READY ⇄ RUNNING → STOPPED,
+  ERROR recuperable. Métodos `initialize()`, `start()`, `stop()`, `mark_error()`,
+  `recover()`, `health_check()`.
+- **`RegistryOrchestrator`** (`registry/orchestrator.py`) — orchestrator
+  desacoplado que no conoce clases concretas. `request(capability, task)`
+  resuelve vía `CapabilityResolver`, ejecuta con lifecycle, y registra usage.
+  `bootstrap()` registra 7 agentes estándar con manifests.
+
+### 15.2 API simplificada del AgentRegistry
+
+Métodos nuevos: `register_simple`, `register_with_manifest`, `list_agents`,
+`list_manifests`, `find_by_capability_simple`, `find_manifests_by_capability`.
+
+### 15.3 Compatibilidad
+
+- `AgentOrchestrator` (Sprint 2.1) sigue funcionando sin cambios.
+- `WorkflowOrchestrator` y `WorkflowEngine` (Sprint 2.2) coexisten.
+- Los 334 tests de Sprint 2.1+2.2 siguen pasando.
+- 100 tests nuevos añadidos en `tests/agents/`.
