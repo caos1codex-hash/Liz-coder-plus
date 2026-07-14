@@ -43,19 +43,27 @@ from .agents.research import ResearchAgent
 from .agents.reviewer import ReviewerAgent
 from .agents.terminal import TerminalAgent
 
-# Sprint 2.2/2 — Registry + Capabilities
+# Sprint 2.2/2 + 2.3 — Registry + Capabilities + Lifecycle + Manifest
 from .registry import (
     ACTION_TO_CAPABILITY,
     AGENT_NAME_TO_CAPABILITIES,
+    AgentManifest,
     AgentRecord,
     AgentRegistry,
     BackwardCompatibilityAdapter,
     Capability,
     CapabilityRegistry,
     CapabilityResolver,
+    ExecutionResult,
+    LifecycleHealth,
+    LifecycleManager,
+    LifecycleState,
+    RegistryOrchestrator,
     ResolutionResult,
     ResolverWeights,
+    can_transition_lifecycle,
     register_standard_capabilities,
+    standard_manifests,
 )
 
 # Sprint 2.2 — Workflow engine
@@ -113,18 +121,26 @@ __all__ = [
     "ResearchAgent",
     "ReviewerAgent",
     "TerminalAgent",
-    # Sprint 2.2/2 — Registry + Capabilities
+    # Sprint 2.2/2 + 2.3 — Registry + Capabilities + Lifecycle + Manifest
     "ACTION_TO_CAPABILITY",
     "AGENT_NAME_TO_CAPABILITIES",
+    "AgentManifest",
     "AgentRecord",
     "AgentRegistry",
     "BackwardCompatibilityAdapter",
     "Capability",
     "CapabilityRegistry",
     "CapabilityResolver",
+    "ExecutionResult",
+    "LifecycleHealth",
+    "LifecycleManager",
+    "LifecycleState",
+    "RegistryOrchestrator",
     "ResolutionResult",
     "ResolverWeights",
+    "can_transition_lifecycle",
     "register_standard_capabilities",
+    "standard_manifests",
     # Sprint 2.2 — Workflow
     "AgentMetrics",
     "CodeSnippet",
