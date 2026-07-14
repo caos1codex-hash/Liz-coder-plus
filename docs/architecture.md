@@ -1752,3 +1752,53 @@ Métodos nuevos: `register_simple`, `register_with_manifest`, `list_agents`,
 - `WorkflowOrchestrator` y `WorkflowEngine` (Sprint 2.2) coexisten.
 - Los 334 tests de Sprint 2.1+2.2 siguen pasando.
 - 100 tests nuevos añadidos en `tests/agents/`.
+
+## 16. Sprint 2.5 — Plugin System & Dynamic Agent Loading
+
+Sprint 2.5 convierte Liz Coder Plus en una plataforma extensible mediante un
+sistema profesional de plugins. Los nuevos agentes, herramientas y workflows
+se instalan sin modificar el código del núcleo.
+
+### 16.1 Componentes nuevos
+
+- **`PluginManifest`** (`plugins/manifest.py`) — contrato declarativo
+  inmutable (id/name/version/author/description/api_version/license/
+  capabilities/dependencies/entry_point/metadata). Validaciones de formato,
+  serialización a/from dict y JSON, consultas de capabilities y dependencias.
+- **`Plugin`** (`plugins/base.py`) — clase base abstracta con ciclo de vida:
+  DISCOVERED → LOADED → INITIALIZED → STARTED → ENABLED ⇄ DISABLED → UNLOADED.
+  Métodos: `initialize()`, `start()`, `stop()`, `shutdown()`, `health_check()`,
+  `get_agents()`, `get_tools()`, `metrics()`.
+- **`PluginManager`** (`plugins/manager.py`) — gestor central con load/unload/
+  reload/enable/disable/install/remove. Detección de duplicados, versiones
+  incompatibles, dependencias faltantes. Integración automática con
+  AgentRegistry (registra agentes al enable, desregistra al disable).
+- **`PluginLoader`** (`plugins/loader.py`) — carga dinámica desde entry_points
+  (module.path:ClassName). Validación de tipo Plugin, métricas.
+- **`PluginDiscovery`** (`plugins/discovery.py`) — escaneo automático de
+  directorios buscando manifest.json en subdirectorios.
+- **`PluginCompatibilityChecker`** (`plugins/versioning.py`) — verificación
+  de API version (major match) y dependencias (min/max version).
+- **`PluginEventBus`** (`plugins/events.py`) — bus pub/sub con 15 tipos de
+  eventos, filtros, historial, métricas.
+- **`ToolPlugin`/`ToolPluginMixin`/`ToolDefinition`** (`plugins/tools.py`) —
+  API extensible para plugins de herramientas.
+- **`PluginState`/`PluginEvent`** (`plugins/enums.py`) — enums con
+  transiciones validadas.
+
+### 16.2 Flujo de integración
+
+```
+Plugin.get_agents()
+  → PluginManager.enable_plugin()
+    → AgentRegistry.register(agent, provided_capabilities=manifest.capabilities)
+      → CapabilityResolver.resolve(capability)
+        → WorkflowEngine asigna steps al agente del plugin
+```
+
+### 16.3 Compatibilidad
+
+- Todos los 801 tests existentes siguen pasando sin modificaciones.
+- Los 67 símbolos exportados previamente permanecen intactos.
+- 18 nuevos símbolos exportados desde `multiagent.__init__.py`.
+- 212 tests nuevos en `tests/plugins/` (8 archivos).

@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Sprint 2.5 — Plugin System
+
+### Sprint 2.5 — Plugin System & Dynamic Agent Loading
+
+#### Added
+- **`PluginManifest`** (`plugins/manifest.py`): contrato declarativo inmutable
+  con validaciones (ID, version semver, API version, entry point, capabilities,
+  dependencies). Serialización a/from dict y JSON. Consultas de capabilities
+  y dependencias.
+- **`Plugin`** (`plugins/base.py`): clase base abstracta con ciclo de vida
+  completo (initialize/start/stop/shutdown). Estados: DISCOVERED → LOADED →
+  INITIALIZED → STARTED → ENABLED ⇄ DISABLED → UNLOADED. Health check,
+  métricas, get_agents(), get_tools().
+- **`PluginManager`** (`plugins/manager.py`): gestor central con load/unload/
+  reload/enable/disable/install/remove. Detección de duplicados, versiones
+  incompatibles, dependencias faltantes. Integración automática con
+  AgentRegistry.
+- **`PluginLoader`** (`plugins/loader.py`): carga dinámica desde entry_points
+  (module.path:ClassName). Validación de tipo, timeouts, métricas.
+- **`PluginDiscovery`** (`plugins/discovery.py`): escaneo automático de
+  directorios buscando manifest.json. Estrategia de subdirectorios y módulos
+  standalone.
+- **`PluginCompatibilityChecker`** (`plugins/versioning.py`): verificación
+  de API version (major match) y dependencias (minimum/maximum version).
+- **`PluginEventBus`** (`plugins/events.py`): bus pub/sub con 15 tipos de
+  eventos, filtros, historial, métricas.
+- **`PluginState`** / **`PluginEvent`** (`plugins/enums.py`): enums con
+  transiciones validadas.
+- **`ToolPlugin`** / **`ToolPluginMixin`** / **`ToolDefinition`**
+  (`plugins/tools.py`): API extensible para plugins de herramientas.
+- **Integración con AgentRegistry**: plugins registran agentes
+  automáticamente al enable (con capabilities del manifest), desregistran
+  al disable. Los agentes quedan visibles para CapabilityResolver y
+  WorkflowEngine.
+- **212 nuevos tests** en `tests/plugins/` (8 archivos): manifest, plugin,
+  manager, loader, discovery, versioning, events, registry integration, tools.
+- **Documentación**: `docs/plugins.md`, `docs/plugin-development.md`,
+  `docs/sprint-2.5-audit.md`.
+
+#### Compatibility
+- Todos los 801 tests existentes siguen pasando sin modificaciones.
+- Los 67+ símbolos exportados previamente permanecen intactos.
+- 18 nuevos símbolos exportados desde `multiagent.__init__py`.
+
 ## [0.7.0] — 2026-07-14 — Sprint 2.3 estable
 
 ### Sprint 2.3 — Agent Lifecycle & Registry Integration
