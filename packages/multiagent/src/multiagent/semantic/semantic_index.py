@@ -192,8 +192,8 @@ class SemanticIndex:
             filters["memory_type"] = memory_type
         if owner is not None:
             filters["owner"] = owner
-        if tags is not None:
-            filters["tags"] = tags  # Exact match on tags list
+        # Note: tag filtering is done post-search (list equality doesn't
+        # work well in metadata filters)
 
         # Embed the query
         embedding = await self._get_or_compute_embedding(query)
@@ -201,10 +201,18 @@ class SemanticIndex:
         # Search
         results = await self._store.search(
             query_vector=embedding.vector,
-            top_k=top_k,
+            top_k=top_k * 3,  # Over-fetch for post-filtering
             min_score=min_score,
             filters=filters if filters else None,
         )
+
+        # Post-filter by tags (list matching)
+        if tags:
+            required = set(tags)
+            results = [
+                r for r in results
+                if required.issubset(set(r.metadata.get("tags", [])))
+            ]
 
         elapsed_ms = (time.monotonic() - t0) * 1000
 
