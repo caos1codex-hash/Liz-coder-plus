@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Sprint 2.2/2 — Agent Registry + Capabilities Refinement
+
+### Added
+- **Registry subpackage** (`packages/multiagent/src/multiagent/registry/`):
+  - `Capability` (inmutable, jerárquica con dots, wildcards `*`).
+  - `CapabilityRegistry`: register/unregister/get/exists/all/by_category/
+    search/categories/metrics. `register_standard_capabilities()` registra
+    34 capabilities en 10 categorías.
+  - `AgentRecord`: wrapper con id/name/version/capabilities/priority/status/
+    metadata/created_at/last_seen/last_heartbeat/health/errors/usage.
+  - `AgentRegistry`: register/unregister/replace/discover/get/get_all/
+    exists/health/metrics. Auto-discovery via hooks + `_infer_capabilities`.
+    Health con heartbeat loop, update_health, timeout.
+  - `CapabilityResolver`: resolve(capability) → ResolutionResult con scoring
+    ponderado (specialty + priority + cost + history + load + latency).
+    `ResolverWeights` normalizables.
+  - `BackwardCompatibilityAdapter`: traduce nombres legacy
+    (PlannerAgent/CoderAgent/etc.) y actions (refactor/review/etc.) a
+    capabilities. `auto_register_legacy_agents()`.
+- **`RegistryAwareScheduler`** (`workflow/registry_scheduler.py`): scheduler
+  que usa el `CapabilityResolver` en lugar del LoadBalancer directo. Hereda
+  de `Scheduler`. `mark_step_finished()` registra usage en el AgentRecord.
+  Fallback al LoadBalancer si el resolver miss.
+- **Eventos nuevos**: `agent.registered`, `agent.removed`,
+  `agent.health.changed`, `capability.resolved`, `capability.miss`,
+  `scheduler.selected_agent`.
+- **Documentación**: `docs/sprint-2.2-2-agent-registry-report.md` y
+  `docs/sprint-2.2-2-diagrams.md` (8 diagramas Mermaid).
+- **Tests**: 86 nuevos (Capability, CapabilityRegistry, AgentRegistry,
+  CapabilityResolver, BackwardCompatibilityAdapter, RegistryAwareScheduler).
+
+### Fixed
+- `AgentRegistry.register` ahora usa duck-typing (hasattr) en lugar de
+  `isinstance(agent, BaseAgent)` para ser robusto frente a re-imports del
+  módulo durante tests.
+
+### Compatibilidad
+- Sprint 2.1+2.2: 248/248 tests siguen pasando.
+- Sprint 1: 56+ tests verificados siguen pasando.
+- Ningún workflow existente se rompe: el adapter traduce nombres y
+  actions legacy a capabilities.
+
 ## [Unreleased] — Sprint 2.2 — Collaborative Multi-Agent Execution
 
 ### Added

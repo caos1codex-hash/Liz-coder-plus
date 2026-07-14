@@ -1664,3 +1664,56 @@ El SKIP se propaga en cadena a los dependientes.
 | 7 agentes concretos | `PlannerAgent` extendido | 100% compatible |
 
 Los **130 tests de Sprint 2.1** siguen pasando sin cambios.
+
+## 14. Sprint 2.2/2 — Refinamiento: Agent Registry + Capabilities
+
+> Documentación completa: [`docs/sprint-2.2-2-agent-registry-report.md`](sprint-2.2-2-agent-registry-report.md)
+> y [`docs/sprint-2.2-2-diagrams.md`](sprint-2.2-2-diagrams.md).
+
+Sprint 2.2/2 elimina dependencias rígidas entre Scheduler, Workflow
+Engine y agentes. Los agentes dejan de identificarse únicamente por
+nombre y pasan a ser **descubiertos, registrados y seleccionados
+automáticamente** según sus **capabilities**.
+
+### 14.1 Componentes nuevos
+
+- **`AgentRegistry`** — registro único de agentes. Métodos
+  `register/unregister/replace/discover/get/get_all/exists/health/metrics`.
+  Auto-discovery via hooks. Health con heartbeat, uptime, usage.
+- **`AgentRecord`** — wrapper con id/name/version/capabilities/priority/
+  status/metadata/created_at/last_seen/last_heartbeat/health/errors/usage.
+- **`Capability`** (inmutable, jerárquica con dots, wildcards `*`).
+- **`CapabilityRegistry`** — catálogo de 34 capabilities estándar en
+  10 categorías (planning, workflow, code.*, git.*, terminal.execute,
+  filesystem.*, memory.*, web.search, documentation.lookup, research.*).
+- **`CapabilityResolver`** — selección inteligente por scoring ponderado
+  (specialty + priority + cost + history + load + latency).
+- **`BackwardCompatibilityAdapter`** — traduce nombres legacy
+  (PlannerAgent, CoderAgent, etc.) y actions (refactor, review, etc.)
+  a capabilities. Ningún workflow existente se rompe.
+- **`RegistryAwareScheduler`** — scheduler que usa el resolver en lugar
+  del LoadBalancer directo. Hereda de `Scheduler` (Sprint 2.2).
+
+### 14.2 Eventos nuevos
+
+`agent.registered`, `agent.removed`, `agent.health.changed`,
+`capability.resolved`, `capability.miss`, `scheduler.selected_agent`.
+
+### 14.3 Verificación: nada depende de clases concretas
+
+El `RegistryAwareScheduler` no recibe agentes por nombre; los obtiene
+del `AgentRegistry` vía `CapabilityResolver`. El
+`BackwardCompatibilityAdapter` traduce workflows legacy automáticamente.
+Ningún componente del workflow engine acopla a una clase concreta de
+agente.
+
+### 14.4 Compatibilidad
+
+| Componente anterior | Nuevo componente | Relación |
+|---|---|---|
+| `AgentOrchestrator` (Sprint 2.1) | `AgentRegistry` | Coexisten; registry es fuente de verdad |
+| `Scheduler` (Sprint 2.2) | `RegistryAwareScheduler` | Hereda; se puede usar cualquiera |
+| `LoadBalancer` (Sprint 2.2) | `CapabilityResolver` | Coexisten; resolver usa scoring más rico |
+| Workflows con `step.agent="CoderAgent"` | `BackwardCompatibilityAdapter` | Traduce automáticamente |
+
+Los **248 tests de Sprint 2.1+2.2** siguen pasando sin cambios.
