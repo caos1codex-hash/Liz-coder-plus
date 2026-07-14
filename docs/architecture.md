@@ -766,6 +766,9 @@ Cada método emite su evento correspondiente (`task.created`,
 
 ### 9.5 Workflow Engine
 
+> Sprint 2.4 añade el `TaskPipelineEngine` basado en capacidades.
+> Ver `docs/workflows.md` para documentación completa.
+
 #### DAG (Grafo Dirigido Acíclico)
 
 Un `Workflow` es un conjunto de nodos (`WorkflowNode`) donde cada
@@ -774,12 +777,18 @@ valida el DAG al construirlo (Kahn's algorithm para detectar ciclos).
 
 ```
 Sequential:           Parallel / Fan-out:
-  A → B → C             A
-                          ↘
-                           B   →  D
-                          ↗
-                          C
+ A → B → C             A
+                        ↘
+                         B   →  D
+                        ↗
+                         C
 ```
+
+#### TaskPipelineEngine (Sprint 2.4)
+
+Motor de workflows basado en **capacidades** (no en agentes concretos).
+Resuelve agentes dinámicamente vía `AgentRegistry` + `CapabilityResolver`.
+Características: retry por step, propagación de contexto y fallos, métricas.
 
 #### WorkflowBuilder
 

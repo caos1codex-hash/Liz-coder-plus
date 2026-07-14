@@ -2,6 +2,51 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Sprint 2.4 — Workflow Engine Integration & Multi-Agent Task Pipeline
+
+### Sprint 2.4 — Workflow Engine Integration & Multi-Agent Task Pipeline
+
+#### Added
+- **`TaskPipelineEngine`** (`workflow/task_pipeline_engine.py`): motor de
+  workflows basado en capacidades. NO importa agentes concretos; resuelve
+  agentes vía `AgentRegistry` + `CapabilityResolver`. API: `create_workflow`,
+  `register_workflow`, `get_workflow`, `list_workflows`, `execute_workflow`,
+  `pause_workflow`, `resume_workflow`, `cancel_workflow`, `get_status`.
+- **`TaskRequest`** (`workflow/pipeline_models.py`): solicitud estandarizada
+  con `task_id`, `description`, `capability`, `context`, `metadata`, `payload`.
+- **`TaskResult`** (`workflow/pipeline_models.py`): resultado de ejecución con
+  `success`, `output`, `error`, `execution_time`, `agent_id`, `agent_name`,
+  `metrics`. Factory methods `ok()` y `fail()`.
+- **`WorkflowStepDef`** (`workflow/pipeline_models.py`): definición de step
+  con `capability_required` (no `agent_name` directo), `dependencies`,
+  `timeout`, `retry_policy`, `metadata`.
+- **`StepRetryPolicy`** (`workflow/pipeline_models.py`): política de reintento
+  con `max_attempts`, `retry_delay`, `retry_on_errors` (lista de strings
+  que triggeran retry; vacía = retry en cualquier error).
+- **`PipelineWorkflow`** (`workflow/pipeline_models.py`): contenedor de
+  workflow con `name`, `steps`, `description`, `metadata`, `timeout`.
+- **`PipelineExecutionResult`** (`workflow/task_pipeline_engine.py`):
+  resultado completo de ejecución con `steps_completed`, `steps_failed`,
+  `steps_skipped`, `duration_ms`, `agents_used`, `total_retries`.
+- **Integración con Registry**: el engine resuelve agentes por capability
+  usando `CapabilityResolver`, ejecuta vía `BaseAgent.execute()`, y opcionalmente
+  usa `LifecycleManager` para control de estado.
+- **Sistema de dependencias**: reutiliza el `DAG` de Sprint 2.2 para
+  validación de ciclos, orden topológico, y propagación de fallos (skip).
+- **Retry system**: cada step puede tener su propia `StepRetryPolicy`.
+  Soporte para reintentar solo en errores específicos (case-insensitive).
+- **Observabilidad**: métricas agregadas del engine y por workflow.
+- **Context propagation**: outputs de steps anteriores se pasan como contexto
+  a steps dependientes.
+- **Documentación**: `docs/workflows.md`, `docs/sprint-2.4-audit.md`.
+- **Tests**: 73 nuevos en `tests/workflows/` (models, engine, execution,
+  dependencies, retry, integration). Total: 864 tests pasando.
+
+#### Changed
+- `workflow/__init__.py`: exportar nuevos símbolos (TaskPipelineEngine,
+  TaskRequest, TaskResult, WorkflowStepDef, StepRetryPolicy,
+  PipelineWorkflow, PipelineExecutionResult).
+
 ## [0.7.0] — 2026-07-14 — Sprint 2.3 estable
 
 ### Sprint 2.3 — Agent Lifecycle & Registry Integration
