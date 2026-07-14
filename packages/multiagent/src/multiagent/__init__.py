@@ -85,6 +85,32 @@ from .workflow.observability import Histogram, MetricsCollector
 from .workflow.registry_scheduler import RegistryAwareScheduler
 from .workflow.scheduler import ScheduleDecision, Scheduler, SchedulerConfig
 
+# Sprint 2.5 — Plugin System
+from .plugins import (
+    can_transition_plugin,
+    CompatibilityResult,
+    DiscoveredPlugin,
+    DiscoveryResult,
+    LoadResult,
+    Plugin,
+    PluginCompatibilityChecker,
+    PluginDiscovery,
+    PluginEvent,
+    PluginEventBus,
+    PluginEventHandler,
+    PluginEventFilter,
+    PluginHealth,
+    PluginLoader,
+    PluginManifest,
+    PluginManager,
+    PluginRecord,
+    PluginState,
+    PluginSystemEvent,
+    ToolDefinition,
+    ToolPlugin,
+    ToolPluginMixin,
+)
+
 __all__ = [
     # Base
     "BaseAgent",
@@ -170,4 +196,27 @@ __all__ = [
     "WorkflowExecutionResult",
     "WorkflowOrchestrator",
     "WorkflowStatus",
+    # Sprint 2.5 — Plugin System
+    "can_transition_plugin",
+    "CompatibilityResult",
+    "DiscoveredPlugin",
+    "DiscoveryResult",
+    "LoadResult",
+    "Plugin",
+    "PluginCompatibilityChecker",
+    "PluginDiscovery",
+    "PluginEvent",
+    "PluginEventBus",
+    "PluginEventHandler",
+    "PluginEventFilter",
+    "PluginHealth",
+    "PluginLoader",
+    "PluginManifest",
+    "PluginManager",
+    "PluginRecord",
+    "PluginState",
+    "PluginSystemEvent",
+    "ToolDefinition",
+    "ToolPlugin",
+    "ToolPluginMixin",
 ]
