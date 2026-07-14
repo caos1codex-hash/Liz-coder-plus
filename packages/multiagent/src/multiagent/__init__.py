@@ -111,6 +111,32 @@ from .plugins import (
     ToolPluginMixin,
 )
 
+# Sprint 2.6 — Memory & Context Engine
+from .memctx import (
+    ContextEngine,
+    ContextRequest,
+    ContextResult,
+    ContextSnapshot,
+    ConversationMemory,
+    FileStorage,
+    InMemoryStorage,
+    KnowledgeMemory,
+    MemoryEngine,
+    MemoryEvent,
+    MemoryEventBus,
+    MemoryEventType,
+    MemoryMetrics,
+    MemoryPolicy,
+    MemoryPolicyManager,
+    MemoryRecord,
+    MemorySearchIndex,
+    MemoryStorage,
+    MemoryType,
+    ProjectMemory,
+    SearchResult,
+    WorkflowMemory,
+)
+
 __all__ = [
     # Base
     "BaseAgent",
@@ -219,4 +245,27 @@ __all__ = [
     "ToolDefinition",
     "ToolPlugin",
     "ToolPluginMixin",
+    # Sprint 2.6 — Memory & Context Engine
+    "ContextEngine",
+    "ContextRequest",
+    "ContextResult",
+    "ContextSnapshot",
+    "ConversationMemory",
+    "FileStorage",
+    "InMemoryStorage",
+    "KnowledgeMemory",
+    "MemoryEngine",
+    "MemoryEvent",
+    "MemoryEventBus",
+    "MemoryEventType",
+    "MemoryMetrics",
+    "MemoryPolicy",
+    "MemoryPolicyManager",
+    "MemoryRecord",
+    "MemorySearchIndex",
+    "MemoryStorage",
+    "MemoryType",
+    "ProjectMemory",
+    "SearchResult",
+    "WorkflowMemory",
 ]

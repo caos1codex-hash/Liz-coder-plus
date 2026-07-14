@@ -2,7 +2,50 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Sprint 2.5 — Plugin System
+## [Unreleased] — Sprint 2.6 — Memory & Context Engine
+
+### Sprint 2.6 — Memory & Context Engine
+
+#### Added
+- **`MemoryRecord`** (`memctx/models.py`): modelo base con id, timestamps, owner,
+  tags, metadata, version, TTL, priority. Validación de IDs, etiquetas y metadatos.
+  Serialización a/from dict.
+- **`ConversationMemory`**, **`ProjectMemory`**, **`WorkflowMemory`**,
+  **`KnowledgeMemory`**: modelos especializados que extienden MemoryRecord.
+- **`ContextSnapshot`**: snapshot de contexto ensamblado listo para consumo.
+- **`MemoryStorage`** (`memctx/storage.py`): interfaz abstracta con 9 operaciones
+  (save, update, delete, get, exists, search, list, clear, count).
+- **`InMemoryStorage`**: backend en memoria, thread-safe via threading.Lock.
+- **`FileStorage`**: backend persistente basado en archivos JSON con índice
+  en memoria y reconstrucción automática.
+- **`MemoryEngine`** (`memctx/engine.py`): motor CRUD independiente del backend
+  con detección de duplicados, control de versiones, métricas y eventos.
+  Métodos de conveniencia: store_conversation, store_project, store_workflow,
+  store_knowledge.
+- **`ContextEngine`** (`memctx/context.py`): ensamblaje de contexto para agentes y
+  workflows con deduplicación, filtrado por prioridad, trim a presupuesto de
+  tokens. Pipeline: fetch → dedup → filter → sort → trim → snapshot.
+- **`MemorySearchIndex`** (`memctx/search.py`): índice en memoria con 6 índices
+  invertidos (id, tags, owner, type, text, metadata). Búsqueda combinada con
+  scoring.
+- **`MemoryPolicyManager`** (`memctx/policies.py`): políticas configurables de
+  TTL, expiración, archivado y evicción. Cleanup automático.
+- **`MemoryEventBus`** (`memctx/events.py`): bus pub/sub asíncrono con 7 tipos
+  de eventos, historial, métricas y filtros.
+- **`MemoryMetrics`** (`memctx/metrics.py`): métricas operacionales con latencia
+  percentiles (p50, p95, p99), hit rate, contadores por tipo.
+- **`WorkflowMemoryAdapter`** (`memctx/integration.py`): puente entre MemoryEngine
+  y WorkflowEngine para persistencia de contexto.
+- **`RegistryMemoryAdapter`**: puente entre MemoryEngine y AgentRegistry para
+  acceso a memoria por agente.
+- **`PluginMemoryBridge`**: puente de eventos de memoria al PluginEventBus.
+- **246 tests nuevos** en `tests/memory/` cubriendo modelos, storage, engine,
+  context, search, policies, events, metrics e integración.
+- **Documentación**: `docs/memory.md`, `docs/context-engine.md`,
+  `docs/storage-backends.md`, `docs/sprint-2.6-report.md`,
+  `docs/sprint-2.6-audit.md`.
+
+## Sprint 2.5 — Plugin System & Dynamic Agent Loading
 
 ### Sprint 2.5 — Plugin System & Dynamic Agent Loading
 

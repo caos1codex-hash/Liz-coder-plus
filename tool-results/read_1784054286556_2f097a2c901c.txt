@@ -1,0 +1,731 @@
+    40→    40→    SCHEDULER_JOB_COMPLETED,
+    41→    41→    SCHEDULER_JOB_FAILED,
+    42→    42→    SCHEDULER_JOB_RETRIED,
+    43→    43→    SCHEDULER_JOB_SCHEDULED,
+    44→    44→    SCHEDULER_JOB_STARTED,
+    45→    45→    TASK_CANCELLED,
+    46→    46→    TASK_COMPLETED,
+    47→    47→    TASK_CREATED,
+    48→    48→    TASK_FAILED,
+    49→    49→    TASK_PAUSED,
+    50→    50→    TASK_RESUMED,
+    51→    51→    TASK_STARTED,
+    52→    52→    TOOL_DENIED,
+    53→    53→    TOOL_EXECUTED,
+    54→    54→    TOOL_FAILED,
+    55→    55→    TOOL_REQUESTED,
+    56→    56→    WORKFLOW_CANCELLED,
+    57→    57→    WORKFLOW_COMPLETED,
+    58→    58→    WORKFLOW_CREATED,
+    59→    59→    WORKFLOW_FAILED,
+    60→    60→    WORKFLOW_STARTED,
+    61→    61→)
+    62→    62→
+    63→    63→logger = logging.getLogger(__name__)
+    64→    64→
+    65→    65→
+    66→    66→# ----------------------------------------------------------------------
+    67→    67→# Metrics data structures
+    68→    68→# ----------------------------------------------------------------------
+    69→    69→
+    70→    70→
+    71→    71→@dataclass
+    72→    72→class Counter:
+    73→    73→    """A monotonically increasing counter."""
+    74→    74→
+    75→    75→    value: int = 0
+    76→    76→
+    77→    77→    def inc(self, n: int = 1) -> None:
+    78→    78→        self.value += n
+    79→    79→
+    80→    80→
+    81→    81→@dataclass
+    82→    82→class Histogram:
+    83→    83→    """A simple histogram with min/max/avg/count/sum.
+    84→    84→
+    85→    85→    Buckets are not stored; this is a lightweight summary suitable
+    86→    86→    for in-process inspection. For real percentiles, future sprints
+    87→    87→    can plug in ``prometheus_client`` or similar.
+    88→    88→    """
+    89→    89→
+    90→    90→    count: int = 0
+    91→    91→    sum: float = 0.0
+    92→    92→    min: float = float("inf")
+    93→    93→    max: float = 0.0
+    94→    94→
+    95→    95→    def observe(self, value: float) -> None:
+    96→    96→        self.count += 1
+    97→    97→        self.sum += value
+    98→    98→        if value < self.min:
+    99→    99→            self.min = value
+   100→   100→        if value > self.max:
+   101→   101→            self.max = value
+   102→   102→
+   103→   103→    @property
+   104→   104→    def avg(self) -> float:
+   105→   105→        return self.sum / self.count if self.count > 0 else 0.0
+   106→   106→
+   107→   107→    def to_dict(self) -> dict[str, float]:
+   108→   108→        return {
+   109→   109→            "count": self.count,
+   110→   110→            "sum": self.sum,
+   111→   111→            "min": self.min if self.count > 0 else 0.0,
+   112→   112→            "max": self.max,
+   113→   113→            "avg": self.avg,
+   114→   114→        }
+   115→   115→
+   116→   116→
+   117→   117→# ----------------------------------------------------------------------
+   118→   118→# Metrics Collector
+   119→   119→# ----------------------------------------------------------------------
+   120→   120→
+   121→   121→
+   122→   122→class MetricsCollector:
+   123→   123→    """Subscribes to the EventBus and records metrics.
+   124→   124→
+   125→   125→    Usage::
+   126→   126→
+   127→   127→        bus = EventBus()
+   128→   128→        metrics = MetricsCollector(bus)
+   129→   129→        await metrics.start()
+   130→   130→        # ... system runs, events are emitted ...
+   131→   131→        snapshot = metrics.snapshot()
+   132→   132→        await metrics.stop()
+   133→   133→
+   134→   134→    The collector is safe to use without an event bus (in which case
+   135→   135→    ``record_*`` methods can be called directly).
+   136→   136→    """
+   137→   137→
+   138→   138→    # Maximum number of audit entries to keep in memory.
+   139→   139→    AUDIT_BUFFER = 500
+   140→   140→
+   141→   141→    def __init__(self, event_bus: Any | None = None) -> None:
+   142→   142→        self._bus = event_bus
+   143→   143→        self._counters: dict[str, Counter] = defaultdict(Counter)
+   144→   144→        self._histograms: dict[str, Histogram] = defaultdict(Histogram)
+   145→   145→        self._audit: deque[dict[str, Any]] = deque(maxlen=self.AUDIT_BUFFER)
+   146→   146→        self._lock = threading.Lock()
+   147→   147→        self._subscriptions: list[tuple[str, Any]] = []
+   148→   148→        self._started = False
+   149→   149→
+   150→   150→    # ------------------------------------------------------------------
+   151→   151→    # Lifecycle
+   152→   152→    # ------------------------------------------------------------------
+   153→   153→
+   154→   154→    async def start(self) -> None:
+   155→   155→        """Subscribe to all known lifecycle events."""
+   156→   156→        if self._started or self._bus is None:
+   157→   157→            self._started = True
+   158→   158→            return
+   159→   159→
+   160→   160→        # Map event types to handler methods.
+   161→   161→        subscriptions = [
+   162→   162→            (TASK_CREATED, self._on_task_created),
+   163→   163→            (TASK_STARTED, self._on_task_started),
+   164→   164→            (TASK_COMPLETED, self._on_task_completed),
+   165→   165→            (TASK_FAILED, self._on_task_failed),
+   166→   166→            (TASK_CANCELLED, self._on_task_cancelled),
+   167→   167→            (TASK_PAUSED, self._on_task_paused),
+   168→   168→            (TASK_RESUMED, self._on_task_resumed),
+   169→   169→            (WORKFLOW_CREATED, self._on_workflow_created),
+   170→   170→            (WORKFLOW_STARTED, self._on_workflow_started),
+   171→   171→            (WORKFLOW_COMPLETED, self._on_workflow_completed),
+   172→   172→            (WORKFLOW_FAILED, self._on_workflow_failed),
+   173→   173→            (WORKFLOW_CANCELLED, self._on_workflow_cancelled),
+   174→   174→            (AGENT_INVOKED, self._on_agent_invoked),
+   175→   175→            (AGENT_COMPLETED, self._on_agent_completed),
+   176→   176→            (AGENT_FAILED, self._on_agent_failed),
+   177→   177→            (TOOL_REQUESTED, self._on_tool_requested),
+   178→   178→            (TOOL_EXECUTED, self._on_tool_executed),
+   179→   179→            (TOOL_FAILED, self._on_tool_failed),
+   180→   180→            (TOOL_DENIED, self._on_tool_denied),
+   181→   181→            # Sprint 1.8 — Scheduler and Recovery events.
+   182→   182→            (SCHEDULER_JOB_SCHEDULED, self._on_scheduler_job_scheduled),
+   183→   183→            (SCHEDULER_JOB_STARTED, self._on_scheduler_job_started),
+   184→   184→            (SCHEDULER_JOB_COMPLETED, self._on_scheduler_job_completed),
+   185→   185→            (SCHEDULER_JOB_FAILED, self._on_scheduler_job_failed),
+   186→   186→            (SCHEDULER_JOB_CANCELLED, self._on_scheduler_job_cancelled),
+   187→   187→            (SCHEDULER_JOB_RETRIED, self._on_scheduler_job_retried),
+   188→   188→            (RECOVERY_STARTED, self._on_recovery_started),
+   189→   189→            (RECOVERY_COMPLETED, self._on_recovery_completed),
+   190→   190→            (CHECKPOINT_SAVED, self._on_checkpoint_saved),
+   191→   191→            (CHECKPOINT_RESTORED, self._on_checkpoint_restored),
+   192→   192→        ]
+   193→   193→        for event_type, handler in subscriptions:
+   194→   194→            self._bus.subscribe(event_type, handler)
+   195→   195→            self._subscriptions.append((event_type, handler))
+   196→   196→
+   197→   197→        self._started = True
+   198→   198→        logger.info("MetricsCollector started (%d subscriptions)",
+   199→   199→                    len(self._subscriptions))
+   200→   200→
+   201→   201→    async def stop(self) -> None:
+   202→   202→        """Unsubscribe all handlers."""
+   203→   203→        if self._bus is None:
+   204→   204→            self._started = False
+   205→   205→            return
+   206→   206→        for event_type, handler in self._subscriptions:
+   207→   207→            try:
+   208→   208→                self._bus.unsubscribe(event_type, handler)
+   209→   209→            except Exception:  # noqa: BLE001
+   210→   210→                pass
+   211→   211→        self._subscriptions.clear()
+   212→   212→        self._started = False
+   213→   213→
+   214→   214→    # ------------------------------------------------------------------
+   215→   215→    # Public manual recording (for use without a bus)
+   216→   216→    # ------------------------------------------------------------------
+   217→   217→
+   218→   218→    def inc_counter(self, name: str, n: int = 1) -> None:
+   219→   219→        with self._lock:
+   220→   220→            self._counters[name].inc(n)
+   221→   221→
+   222→   222→    def observe(self, name: str, value: float) -> None:
+   223→   223→        with self._lock:
+   224→   224→            self._histograms[name].observe(value)
+   225→   225→
+   226→   226→    def record_audit(self, event_type: str, payload: Any) -> None:
+   227→   227→        """Record an audit entry."""
+   228→   228→        with self._lock:
+   229→   229→            self._audit.append({
+   230→   230→                "ts": time.monotonic(),
+   231→   231→                "event_type": event_type,
+   232→   232→                "payload": payload,
+   233→   233→            })
+   234→   234→
+   235→   235→    # ------------------------------------------------------------------
+   236→   236→    # Snapshot
+   237→   237→    # ------------------------------------------------------------------
+   238→   238→
+   239→   239→    def snapshot(self) -> dict[str, Any]:
+   240→   240→        """Return a JSON-serializable snapshot of all metrics."""
+   241→   241→        with self._lock:
+   242→   242→            counters = {k: v.value for k, v in self._counters.items()}
+   243→   243→            histograms = {k: v.to_dict() for k, v in self._histograms.items()}
+   244→   244→            audit = list(self._audit)
+   245→   245→        return {
+   246→   246→            "counters": counters,
+   247→   247→            "histograms": histograms,
+   248→   248→            "audit_count": len(audit),
+   249→   249→            "audit_last_20": audit[-20:],
+   250→   250→        }
+   251→   251→
+   252→   252→    def counter_value(self, name: str) -> int:
+   253→   253→        """Return the current value of a counter."""
+   254→   254→        with self._lock:
+   255→   255→            return self._counters.get(name, Counter()).value
+   256→   256→
+   257→   257→    def histogram_value(self, name: str) -> dict[str, float]:
+   258→   258→        """Return the current histogram summary."""
+   259→   259→        with self._lock:
+   260→   260→            return self._histograms.get(name, Histogram()).to_dict()
+   261→   261→
+   262→   262→    # ------------------------------------------------------------------
+   263→   263→    # Event handlers (async, called by EventBus)
+   264→   264→    # ------------------------------------------------------------------
+   265→   265→
+   266→   266→    async def _on_task_created(self, payload: Any) -> None:
+   267→   267→        self.inc_counter("tasks_created")
+   268→   268→        self.record_audit(TASK_CREATED, payload)
+   269→   269→
+   270→   270→    async def _on_task_started(self, payload: Any) -> None:
+   271→   271→        self.inc_counter("tasks_started")
+   272→   272→        self.record_audit(TASK_STARTED, payload)
+   273→   273→
+   274→   274→    async def _on_task_completed(self, payload: Any) -> None:
+   275→   275→        self.inc_counter("tasks_completed")
+   276→   276→        self.record_audit(TASK_COMPLETED, payload)
+   277→   277→
+   278→   278→    async def _on_task_failed(self, payload: Any) -> None:
+   279→   279→        self.inc_counter("tasks_failed")
+   280→   280→        # Track errors by type if available.
+   281→   281→        error_type = "unknown"
+   282→   282→        if isinstance(payload, dict):
+   283→   283→            error_type = payload.get("error_type", "unknown")
+   284→   284→        self.inc_counter(f"task_errors_by_type.{error_type}")
+   285→   285→        self.record_audit(TASK_FAILED, payload)
+   286→   286→
+   287→   287→    async def _on_task_cancelled(self, payload: Any) -> None:
+   288→   288→        self.inc_counter("tasks_cancelled")
+   289→   289→        self.record_audit(TASK_CANCELLED, payload)
+   290→   290→
+   291→   291→    async def _on_task_paused(self, payload: Any) -> None:
+   292→   292→        self.inc_counter("tasks_paused")
+   293→   293→        self.record_audit(TASK_PAUSED, payload)
+   294→   294→
+   295→   295→    async def _on_task_resumed(self, payload: Any) -> None:
+   296→   296→        self.inc_counter("tasks_resumed")
+   297→   297→        # Count retries separately.
+   298→   298→        if isinstance(payload, dict) and payload.get("reason") == "retry":
+   299→   299→            self.inc_counter("task_retries")
+   300→   300→        self.record_audit(TASK_RESUMED, payload)
+   301→   301→
+   302→   302→    async def _on_workflow_created(self, payload: Any) -> None:
+   303→   303→        self.inc_counter("workflows_created")
+   304→   304→        self.record_audit(WORKFLOW_CREATED, payload)
+   305→   305→
+   306→   306→    async def _on_workflow_started(self, payload: Any) -> None:
+   307→   307→        self.inc_counter("workflows_started")
+   308→   308→        self.record_audit(WORKFLOW_STARTED, payload)
+   309→   309→
+   310→   310→    async def _on_workflow_completed(self, payload: Any) -> None:
+   311→   311→        self.inc_counter("workflows_completed")
+   312→   312→        self.record_audit(WORKFLOW_COMPLETED, payload)
+   313→   313→
+   314→   314→    async def _on_workflow_failed(self, payload: Any) -> None:
+   315→   315→        self.inc_counter("workflows_failed")
+   316→   316→        self.record_audit(WORKFLOW_FAILED, payload)
+   317→   317→
+   318→   318→    async def _on_workflow_cancelled(self, payload: Any) -> None:
+   319→   319→        self.inc_counter("workflows_cancelled")
+   320→   320→        self.record_audit(WORKFLOW_CANCELLED, payload)
+   321→   321→
+   322→   322→    async def _on_agent_invoked(self, payload: Any) -> None:
+   323→   323→        self.inc_counter("agent_invocations")
+   324→   324→        if isinstance(payload, dict):
+   325→   325→            agent_name = payload.get("agent_name", "unknown")
+   326→   326→            self.inc_counter(f"agent_invocations.{agent_name}")
+   327→   327→        self.record_audit(AGENT_INVOKED, payload)
+   328→   328→
+   329→   329→    async def _on_agent_completed(self, payload: Any) -> None:
+   330→   330→        self.inc_counter("agent_completions")
+   331→   331→        if isinstance(payload, dict):
+   332→   332→            agent_name = payload.get("agent_name", "unknown")
+   333→   333→            duration_ms = payload.get("duration_ms", 0)
+   334→   334→            self.observe(f"agent_duration_ms.{agent_name}", float(duration_ms))
+   335→   335→            self.observe("agent_duration_ms.total", float(duration_ms))
+   336→   336→        self.record_audit(AGENT_COMPLETED, payload)
+   337→   337→
+   338→   338→    async def _on_agent_failed(self, payload: Any) -> None:
+   339→   339→        self.inc_counter("agent_failures")
+   340→   340→        if isinstance(payload, dict):
+   341→   341→            error_type = payload.get("error_type", "unknown")
+   342→   342→            self.inc_counter(f"agent_errors_by_type.{error_type}")
+   343→   343→        self.record_audit(AGENT_FAILED, payload)
+   344→   344→
+   345→   345→    async def _on_tool_requested(self, payload: Any) -> None:
+   346→   346→        self.inc_counter("tool_requests")
+   347→   347→        if isinstance(payload, dict):
+   348→   348→            tool_name = payload.get("tool_name", "unknown")
+   349→   349→            self.inc_counter(f"tool_requests.{tool_name}")
+   350→   350→        self.record_audit(TOOL_REQUESTED, payload)
+   351→   351→
+   352→   352→    async def _on_tool_executed(self, payload: Any) -> None:
+   353→   353→        self.inc_counter("tool_executions")
+   354→   354→        if isinstance(payload, dict):
+   355→   355→            tool_name = payload.get("tool_name", "unknown")
+   356→   356→            duration_ms = payload.get("duration_ms", 0)
+   357→   357→            self.inc_counter(f"tool_executions.{tool_name}")
+   358→   358→            self.observe(f"tool_duration_ms.{tool_name}", float(duration_ms))
+   359→   359→            self.observe("tool_duration_ms.total", float(duration_ms))
+   360→   360→        self.record_audit(TOOL_EXECUTED, payload)
+   361→   361→
+   362→   362→    async def _on_tool_failed(self, payload: Any) -> None:
+   363→   363→        self.inc_counter("tool_failures")
+   364→   364→        if isinstance(payload, dict):
+   365→   365→            tool_name = payload.get("tool_name", "unknown")
+   366→   366→            error_type = payload.get("error_type", "unknown")
+   367→   367→            self.inc_counter(f"tool_failures.{tool_name}")
+   368→   368→            self.inc_counter(f"tool_errors_by_type.{error_type}")
+   369→   369→        self.record_audit(TOOL_FAILED, payload)
+   370→   370→
+   371→   371→    async def _on_tool_denied(self, payload: Any) -> None:
+   372→   372→        self.inc_counter("tool_denials")
+   373→   373→        if isinstance(payload, dict):
+   374→   374→            tool_name = payload.get("tool_name", "unknown")
+   375→   375→            self.inc_counter(f"tool_denials.{tool_name}")
+   376→   376→        self.record_audit(TOOL_DENIED, payload)
+   377→   377→
+   378→   378→    # ------------------------------------------------------------------
+   379→   379→    # Sprint 1.8 — Scheduler and Recovery event handlers
+   380→   380→    # ------------------------------------------------------------------
+   381→   381→
+   382→   382→    async def _on_scheduler_job_scheduled(self, payload: Any) -> None:
+   383→   383→        self.inc_counter("scheduler_jobs_scheduled")
+   384→   384→        self.record_audit("scheduler.job.scheduled", payload)
+   385→   385→
+   386→   386→    async def _on_scheduler_job_started(self, payload: Any) -> None:
+   387→   387→        self.inc_counter("scheduler_jobs_started")
+   388→   388→        self.record_audit("scheduler.job.started", payload)
+   389→   389→
+   390→   390→    async def _on_scheduler_job_completed(self, payload: Any) -> None:
+   391→   391→        self.inc_counter("scheduler_jobs_completed")
+   392→   392→        self.record_audit("scheduler.job.completed", payload)
+   393→   393→
+   394→   394→    async def _on_scheduler_job_failed(self, payload: Any) -> None:
+   395→   395→        self.inc_counter("scheduler_jobs_failed")
+   396→   396→        self.record_audit("scheduler.job.failed", payload)
+   397→   397→
+   398→   398→    async def _on_scheduler_job_cancelled(self, payload: Any) -> None:
+   399→   399→        self.inc_counter("scheduler_jobs_cancelled")
+   400→   400→        self.record_audit("scheduler.job.cancelled", payload)
+   401→   401→
+   402→   402→    async def _on_scheduler_job_retried(self, payload: Any) -> None:
+   403→   403→        self.inc_counter("scheduler_job_retries")
+   404→   404→        self.record_audit("scheduler.job.retried", payload)
+   405→   405→
+   406→   406→    async def _on_recovery_started(self, payload: Any) -> None:
+   407→   407→        self.inc_counter("recoveries_started")
+   408→   408→        self.record_audit("recovery.started", payload)
+   409→   409→
+   410→   410→    async def _on_recovery_completed(self, payload: Any) -> None:
+   411→   411→        self.inc_counter("recoveries_completed")
+   412→   412→        if isinstance(payload, dict):
+   413→   413→            duration_ms = payload.get("duration_ms", 0)
+   414→   414→            self.observe("recovery_duration_ms", float(duration_ms))
+   415→   415→        self.record_audit("recovery.completed", payload)
+   416→   416→
+   417→   417→    async def _on_checkpoint_saved(self, payload: Any) -> None:
+   418→   418→        self.inc_counter("checkpoints_saved")
+   419→   419→        self.record_audit("checkpoint.saved", payload)
+   420→   420→
+   421→   421→    async def _on_checkpoint_restored(self, payload: Any) -> None:
+   422→   422→        self.inc_counter("checkpoints_restored")
+   423→   423→        self.record_audit("checkpoint.restored", payload)
+   424→   424→
+   425→   425→    # ------------------------------------------------------------------
+   426→   426→    # Sprint 1.8 — Advanced tracking by entity
+   427→   427→    # ------------------------------------------------------------------
+   428→   428→
+   429→   429→    def task_summary(self, task_id: str) -> dict[str, Any]:
+   430→   430→        """Return all metrics events related to a specific task.
+   431→   431→
+   432→   432→        Searches the audit trail for entries containing the task_id.
+   433→   433→
+   434→   434→        Returns:
+   435→   435→            Dict with event counts and details for the task.
+   436→   436→        """
+   437→   437→        with self._lock:
+   438→   438→            task_events = [
+   439→   439→                e for e in self._audit
+   440→   440→                if isinstance(e.get("payload"), dict)
+   441→   441→                and e["payload"].get("task_id") == task_id
+   442→   442→            ]
+   443→   443→        return {
+   444→   444→            "task_id": task_id,
+   445→   445→            "event_count": len(task_events),
+   446→   446→            "events": [
+   447→   447→                {"type": e["event_type"], "ts": e["ts"]}
+   448→   448→                for e in task_events
+   449→   449→            ],
+   450→   450→        }
+   451→   451→
+   452→   452→    def workflow_summary(self, workflow_id: str) -> dict[str, Any]:
+   453→   453→        """Return all metrics events related to a specific workflow.
+   454→   454→
+   455→   455→        Returns:
+   456→   456→            Dict with event counts and details for the workflow.
+   457→   457→        """
+   458→   458→        with self._lock:
+   459→   459→            wf_events = [
+   460→   460→                e for e in self._audit
+   461→   461→                if isinstance(e.get("payload"), dict)
+   462→   462→                and e["payload"].get("workflow_id") == workflow_id
+   463→   463→            ]
+   464→   464→        return {
+   465→   465→            "workflow_id": workflow_id,
+   466→   466→            "event_count": len(wf_events),
+   467→   467→            "events": [
+   468→   468→                {"type": e["event_type"], "ts": e["ts"]}
+   469→   469→                for e in wf_events
+   470→   470→            ],
+   471→   471→        }
+   472→   472→
+   473→   473→    def agent_summary(self, agent_name: str) -> dict[str, Any]:
+   474→   474→        """Return metrics summary for a specific agent.
+   475→   475→
+   476→   476→        Returns:
+   477→   477→            Dict with invocation/completion/failure counts and
+   478→   478→            duration stats for the agent.
+   479→   479→        """
+   480→   480→        with self._lock:
+   481→   481→            invocations = self._counters.get(f"agent_invocations.{agent_name}", Counter()).value
+   482→   482→            completions = self._counters.get("agent_completions", Counter()).value
+   483→   483→            failures = self._counters.get("agent_failures", Counter()).value
+   484→   484→            duration = self._histograms.get(
+   485→   485→                f"agent_duration_ms.{agent_name}", Histogram()
+   486→   486→            )
+   487→   487→        return {
+   488→   488→            "agent_name": agent_name,
+   489→   489→            "invocations": invocations,
+   490→   490→            "completions_total": completions,
+   491→   491→            "failures_total": failures,
+   492→   492→            "duration_ms": duration.to_dict(),
+   493→   493→        }
+   494→   494→
+   495→   495→    def dashboard_snapshot(self) -> dict[str, Any]:
+   496→   496→        """Return a comprehensive snapshot for an internal metrics dashboard.
+   497→   497→
+   498→   498→        Includes:
+   499→   499→            - System-level counters.
+   500→   500→            - Per-agent summaries.
+   501→   501→            - Per-tool summaries.
+   502→   502→            - Task/workflow state distribution.
+   503→   503→            - Recent errors.
+   504→   504→        """
+   505→   505→        with self._lock:
+   506→   506→            counters = {k: v.value for k, v in self._counters.items()}
+   507→   507→            histograms = {k: v.to_dict() for k, v in self._histograms.items()}
+   508→   508→
+   509→   509→        # Recent errors (last 20 error events).
+   510→   510→        recent_errors = []
+   511→   511→        with self._lock:
+   512→   512→            for e in reversed(self._audit):
+   513→   513→                if "fail" in e["event_type"] or "error" in e["event_type"]:
+   514→   514→                    recent_errors.append({
+   515→   515→                        "event": e["event_type"],
+   516→   516→                        "ts": e["ts"],
+   517→   517→                        "payload": e["payload"],
+   518→   518→                    })
+   519→   519→                    if len(recent_errors) >= 20:
+   520→   520→                        break
+   521→   521→
+   522→   522→        # Agent summaries.
+   523→   523→        agent_names = set()
+   524→   524→        with self._lock:
+   525→   525→            for k in self._counters:
+   526→   526→                if k.startswith("agent_invocations.") and k != "agent_invocations":
+   527→   527→                    agent_names.add(k.split(".", 1)[1])
+   528→   528→
+   529→   529→        agents = {name: self.agent_summary(name) for name in agent_names}
+   530→   530→
+   531→   531→        # Tool summaries.
+   532→   532→        tool_names = set()
+   533→   533→        with self._lock:
+   534→   534→            for k in self._counters:
+   535→   535→                if k.startswith("tool_executions.") and k != "tool_executions":
+   536→   536→                    tool_names.add(k.split(".", 1)[1])
+   537→   537→
+   538→   538→        tools = {}
+   539→   539→        for name in tool_names:
+   540→   540→            with self._lock:
+   541→   541→                execs = self._counters.get(f"tool_executions.{name}", Counter()).value
+   542→   542→                fails = self._counters.get(f"tool_failures.{name}", Counter()).value
+   543→   543→                dur = self._histograms.get(
+   544→   544→                    f"tool_duration_ms.{name}", Histogram()
+   545→   545→                )
+   546→   546→            tools[name] = {
+   547→   547→                "executions": execs,
+   548→   548→                "failures": fails,
+   549→   549→                "duration_ms": dur.to_dict(),
+   550→   550→            }
+   551→   551→
+   552→   552→        return {
+   553→   553→            "counters": counters,
+   554→   554→            "histograms": histograms,
+   555→   555→            "agents": agents,
+   556→   556→            "tools": tools,
+   557→   557→            "recent_errors": recent_errors,
+   558→   558→            "audit_count": len(self._audit),
+   559→   559→            "generated_at": time.time(),
+   560→   560→        }
+   561→   561→
+   562→   562→    # ------------------------------------------------------------------
+   563→   563→    # Sprint 1.8 — Metrics exporters
+   564→   564→    # ------------------------------------------------------------------
+   565→   565→
+   566→   566→    def export_json(self) -> str:
+   567→   567→        """Export all metrics as a JSON string.
+   568→   568→
+   569→   569→        Suitable for file-based export, API endpoints, or debugging.
+   570→   570→        """
+   571→   571→        snap = self.snapshot()
+   572→   572→        return json.dumps(snap, indent=2, default=str)
+   573→   573→
+   574→   574→    def export_prometheus(self) -> str:
+   575→   575→        """Export metrics in Prometheus text exposition format.
+   576→   576→
+   577→   577→        Returns a string suitable for a /metrics HTTP endpoint.
+   578→   578→
+   579→   579→        Note: This is a basic exporter. For production use with
+   580→   580→        labels and proper typing, consider integrating
+   581→   581→        ``prometheus_client`` in a future sprint.
+   582→   582→        """
+   583→   583→        lines: list[str] = []
+   584→   584→        lines.append("# HELP liz_tasks_total Total task lifecycle events")
+   585→   585→        lines.append("# TYPE liz_tasks_total counter")
+   586→   586→        with self._lock:
+   587→   587→            for name, counter in self._counters.items():
+   588→   588→                safe_name = name.replace(".", "_")
+   589→   589→                lines.append(f"liz_{safe_name} {counter.value}")
+   590→   590→
+   591→   591→            lines.append("")
+   592→   592→            lines.append("# HELP liz_duration_ms Operation durations")
+   593→   593→            lines.append("# TYPE liz_duration_ms summary")
+   594→   594→            for name, hist in self._histograms.items():
+   595→   595→                safe_name = name.replace(".", "_")
+   596→   596→                lines.append(
+   597→   597→                    f'liz_{safe_name}_avg {hist.avg:.2f}'
+   598→   598→                )
+   599→   599→                lines.append(
+   600→   600→                    f'liz_{safe_name}_count {hist.count}'
+   601→   601→                )
+   602→   602→                lines.append(
+   603→   603→                    f'liz_{safe_name}_sum {hist.sum:.2f}'
+   604→   604→                )
+   605→   605→
+   606→   606→        return "\n".join(lines) + "\n"
+   607→   607→
+   608→   608→    def reset(self) -> None:
+   609→   609→        """Reset all metrics to zero. Useful for testing."""
+   610→   610→        with self._lock:
+   611→   611→            self._counters.clear()
+   612→   612→            self._histograms.clear()
+   613→   613→            self._audit.clear()
+   614→   614→
+   615→   615→
+   616→   616→# ----------------------------------------------------------------------
+   617→   617→# Structured Logger
+   618→   618→# ----------------------------------------------------------------------
+   619→   619→
+   620→   620→
+   621→   621→class StructuredLogger:
+   622→   622→    """JSON-line logger that adds task/workflow/correlation IDs.
+   623→   623→
+   624→   624→    Wraps the standard ``logging`` module: every log record is
+   625→   625→    serialized to a single JSON line with consistent fields.
+   626→   626→
+   627→   627→    Usage::
+   628→   628→
+   629→   629→        slog = StructuredLogger("orchestrator")
+   630→   630→        slog.info("message received", task_id="t1", session_id="s1")
+   631→   631→    """
+   632→   632→
+   633→   633→    def __init__(
+   634→   634→        self,
+   635→   635→        name: str,
+   636→   636→        *,
+   637→   637→        level: int = logging.INFO,
+   638→   638→        correlation_id: str | None = None,
+   639→   639→    ) -> None:
+   640→   640→        self._logger = logging.getLogger(name)
+   641→   641→        self._logger.setLevel(level)
+   642→   642→        self._correlation_id = correlation_id
+   643→   643→        # Ensure we don't double-install handlers.
+   644→   644→        if not any(
+   645→   645→            isinstance(h, _StructuredHandler) for h in self._logger.handlers
+   646→   646→        ):
+   647→   647→            self._logger.addHandler(_StructuredHandler())
+   648→   648→
+   649→   649→    @property
+   650→   650→    def correlation_id(self) -> str | None:
+   651→   651→        return self._correlation_id
+   652→   652→
+   653→   653→    @correlation_id.setter
+   654→   654→    def correlation_id(self, value: str | None) -> None:
+   655→   655→        self._correlation_id = value
+   656→   656→
+   657→   657→    def with_correlation_id(self, cid: str) -> "StructuredLogger":
+   658→   658→        """Return a new logger with the given correlation id."""
+   659→   659→        return StructuredLogger(
+   660→   660→            self._logger.name,
+   661→   661→            level=self._logger.level,
+   662→   662→            correlation_id=cid,
+   663→   663→        )
+   664→   664→
+   665→   665→    def debug(self, msg: str, **fields: Any) -> None:
+   666→   666→        self._log(logging.DEBUG, msg, fields)
+   667→   667→
+   668→   668→    def info(self, msg: str, **fields: Any) -> None:
+   669→   669→        self._log(logging.INFO, msg, fields)
+   670→   670→
+   671→   671→    def warning(self, msg: str, **fields: Any) -> None:
+   672→   672→        self._log(logging.WARNING, msg, fields)
+   673→   673→
+   674→   674→    def error(self, msg: str, **fields: Any) -> None:
+   675→   675→        self._log(logging.ERROR, msg, fields)
+   676→   676→
+   677→   677→    def exception(self, msg: str, **fields: Any) -> None:
+   678→   678→        self._log(logging.ERROR, msg, fields, exc_info=True)
+   679→   679→
+   680→   680→    def _log(
+   681→   681→        self,
+   682→   682→        level: int,
+   683→   683→        msg: str,
+   684→   684→        fields: dict[str, Any],
+   685→   685→        *,
+   686→   686→        exc_info: bool = False,
+   687→   687→    ) -> None:
+   688→   688→        extra: dict[str, Any] = dict(fields)
+   689→   689→        if self._correlation_id is not None:
+   690→   690→            extra.setdefault("correlation_id", self._correlation_id)
+   691→   691→        extra["structured"] = True
+   692→   692→        self._logger.log(level, msg, extra=extra, exc_info=exc_info)
+   693→   693→
+   694→   694→
+   695→   695→class _StructuredHandler(logging.Handler):
+   696→   696→    """Logging handler that emits JSON lines."""
+   697→   697→
+   698→   698→    def emit(self, record: logging.LogRecord) -> None:
+   699→   699→        try:
+   700→   700→            payload: dict[str, Any] = {
+   701→   701→                "ts": record.created,
+   702→   702→                "level": record.levelname,
+   703→   703→                "logger": record.name,
+   704→   704→                "msg": record.getMessage(),
+   705→   705→            }
+   706→   706→            # Pull structured fields out of the ``extra`` kwarg.
+   707→   707→            for key in ("task_id", "workflow_id", "correlation_id",
+   708→   708→                        "session_id", "agent_name", "tool_name",
+   709→   709→                        "stage", "error_type", "duration_ms"):
+   710→   710→                value = getattr(record, key, None)
+   711→   711→                if value is not None:
+   712→   712→                    payload[key] = value
+   713→   713→            # Include any other extras (excluding the standard ones).
+   714→   714→            standard = set(vars(record).keys()) - {"structured"}
+   715→   715→            for k, v in vars(record).items():
+   716→   716→                if k in standard and k not in payload and k != "structured":
+   717→   717→                    if k.startswith("_"):
+   718→   718→                        continue
+   719→   719→                    payload[k] = v
+   720→   720→            if record.exc_info:
+   721→   721→                payload["exc"] = self.format(record)
+   722→   722→            print(json.dumps(payload, default=str), flush=True)
+   723→   723→        except Exception:  # noqa: BLE001
+   724→   724→            # Never let logging break the application.
+   725→   725→            self.handleError(record)
+   726→   726→
+   727→   727→
+   728→   728→# ----------------------------------------------------------------------
+   729→   729→# Convenience: a single audit recorder for tests / debugging
+   730→   730→# ----------------------------------------------------------------------
+   731→   731→
+   732→   732→
+   733→   733→class AuditRecorder:
+   734→   734→    """Tiny in-memory audit log of every event seen.
+   735→   735→
+   736→   736→    Useful for tests and ad-hoc debugging. Not designed for production
+   737→   737→    scale (no persistence, bounded buffer).
+   738→   738→    """
+   739→   739→
+   740→   740→    def __init__(self, capacity: int = 1000) -> None:
+   741→   741→        self._entries: deque[dict[str, Any]] = deque(maxlen=capacity)
+   742→   742→
+   743→   743→    async def record(self, event_type: str, payload: Any) -> None:
+   744→   744→        self._entries.append({
+   745→   745→            "ts": time.monotonic(),
+   746→   746→            "event_type": event_type,
+   747→   747→            "payload": payload,
+   748→   748→        })
+   749→   749→
+   750→   750→    def entries(self) -> list[dict[str, Any]]:
+   751→   751→        return list(self._entries)
+   752→   752→
+   753→   753→    def by_type(self, event_type: str) -> list[dict[str, Any]]:
+   754→   754→        return [e for e in self._entries if e["event_type"] == event_type]
+   755→   755→
+   756→   756→    def clear(self) -> None:
+   757→   757→        self._entries.clear()
+   758→   758→
+   759→   759→    def __len__(self) -> int:
+   760→   760→        return len(self._entries)
+   761→   761→
+   762→   762→
+   763→   763→__all__ = [
+   764→   764→    "AuditRecorder",
+   765→   765→    "Counter",
+   766→   766→    "Histogram",
+   767→   767→    "MetricsCollector",
+   768→   768→    "StructuredLogger",
+   769→   769→]
+   770→   770→

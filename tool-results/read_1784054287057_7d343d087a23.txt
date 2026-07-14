@@ -1,0 +1,919 @@
+    40→    40→from ..base import BaseAgent
+    41→    41→from ..enums import AgentStatus, HealthState
+    42→    42→from .capability import Capability, CapabilityRegistry
+    43→    43→
+    44→    44→if TYPE_CHECKING:
+    45→    45→    from .manifest import AgentManifest
+    46→    46→
+    47→    47→logger = logging.getLogger(__name__)
+    48→    48→
+    49→    49→
+    50→    50→def _now_iso() -> str:
+    51→    51→    return datetime.now(timezone.utc).isoformat()
+    52→    52→
+    53→    53→
+    54→    54→def _now_epoch() -> float:
+    55→    55→    return time.time()
+    56→    56→
+    57→    57→
+    58→    58→# ----------------------------------------------------------------------
+    59→    59→# AgentRecord
+    60→    60→# ----------------------------------------------------------------------
+    61→    61→
+    62→    62→
+    63→    63→@dataclass
+    64→    64→class AgentRecord:
+    65→    65→    """Wrapper sobre un BaseAgent con metadatos de registro.
+    66→    66→
+    67→    67→    Attributes:
+    68→    68→        agent:           El BaseAgent registrado.
+    69→    69→        id:              UUID único del registro.
+    70→    70→        name:            Nombre del agente (debe ser único en el registry).
+    71→    71→        version:         Versión del agente.
+    72→    72→        description:     Descripción humana.
+    73→    73→        provided_capabilities: Capabilities que el agente provee.
+    74→    74→        required_capabilities: Capabilities que el agente necesita de otros.
+    75→    75→        preferred_capabilities: Capabilities preferidas (para routing suave).
+    76→    76→        priority:        Prioridad del agente (mayor = más prioritario).
+    77→    77→        status:          AgentStatus actual (snapshot).
+    78→    78→        metadata:        Metadatos libres.
+    79→    79→        created_at:      ISO timestamp de registro.
+    80→    80→        last_seen:       ISO timestamp de última actividad.
+    81→    81→        last_heartbeat:  ISO timestamp del último heartbeat.
+    82→    82→        health_state:    HealthState (alive/busy/idle/error/dead).
+    83→    83→        errors:          Lista de errores recientes (máx 20).
+    84→    84→        uptime_s:        Segundos desde created_at.
+    85→    85→        usage_count:     Número de veces que se seleccionó.
+    86→    86→        success_count:   Número de selecciones exitosas.
+    87→    87→        failure_count:   Número de selecciones fallidas.
+    88→    88→        total_duration_ms: Tiempo total ocupado (ms).
+    89→    89→        avg_latency_ms:  Latencia media de las últimas N ejecuciones.
+    90→    90→    """
+    91→    91→
+    92→    92→    agent: BaseAgent
+    93→    93→    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    94→    94→    name: str = ""
+    95→    95→    version: str = "0.1.0"
+    96→    96→    description: str = ""
+    97→    97→    provided_capabilities: list[str] = field(default_factory=list)
+    98→    98→    required_capabilities: list[str] = field(default_factory=list)
+    99→    99→    preferred_capabilities: list[str] = field(default_factory=list)
+   100→   100→    priority: int = 0
+   101→   101→    status: AgentStatus = AgentStatus.CREATED
+   102→   102→    metadata: dict[str, Any] = field(default_factory=dict)
+   103→   103→    created_at: str = field(default_factory=_now_iso)
+   104→   104→    last_seen: str = field(default_factory=_now_iso)
+   105→   105→    last_heartbeat: str = field(default_factory=_now_iso)
+   106→   106→    health_state: HealthState = HealthState.ALIVE
+   107→   107→    errors: list[str] = field(default_factory=list)
+   108→   108→    usage_count: int = 0
+   109→   109→    success_count: int = 0
+   110→   110→    failure_count: int = 0
+   111→   111→    total_duration_ms: float = 0.0
+   112→   112→    _latencies: list[float] = field(default_factory=list)
+   113→   113→
+   114→   114→    MAX_ERRORS = 20
+   115→   115→    MAX_LATENCIES = 100
+   116→   116→
+   117→   117→    def __post_init__(self) -> None:
+   118→   118→        if not self.name:
+   119→   119→            self.name = self.agent.name
+   120→   120→        if not self.description:
+   121→   121→            self.description = self.agent.description
+   122→   122→        if not self.version:
+   123→   123→            self.version = getattr(self.agent, "version", "0.1.0")
+   124→   124→
+   125→   125→    # ------------------------------------------------------------------
+   126→   126→    # Health / heartbeat
+   127→   127→    # ------------------------------------------------------------------
+   128→   128→
+   129→   129→    def heartbeat(self) -> None:
+   130→   130→        """Actualiza last_heartbeat y last_seen."""
+   131→   131→        self.last_heartbeat = _now_iso()
+   132→   132→        self.last_seen = _now_iso()
+   133→   133→
+   134→   134→    def update_status(self) -> None:
+   135→   135→        """Snapshot del estado del agente subyacente."""
+   136→   136→        self.status = self.agent.status
+   137→   137→        report = self.agent.health() if hasattr(self.agent, "health") else None
+   138→   138→        if report is not None:
+   139→   139→            self.health_state = report.state
+   140→   140→
+   141→   141→    def record_usage(
+   142→   142→        self,
+   143→   143→        *,
+   144→   144→        success: bool,
+   145→   145→        duration_ms: float = 0.0,
+   146→   146→    ) -> None:
+   147→   147→        """Registra una selección del agente."""
+   148→   148→        self.usage_count += 1
+   149→   149→        self.total_duration_ms += duration_ms
+   150→   150→        self._latencies.append(duration_ms)
+   151→   151→        if len(self._latencies) > self.MAX_LATENCIES:
+   152→   152→            self._latencies = self._latencies[-self.MAX_LATENCIES:]
+   153→   153→        if success:
+   154→   154→            self.success_count += 1
+   155→   155→        else:
+   156→   156→            self.failure_count += 1
+   157→   157→            # Sincronizar errores del agente si los tiene.
+   158→   158→            last_err = getattr(self.agent, "last_error", None)
+   159→   159→            if last_err:
+   160→   160→                self.add_error(last_err)
+   161→   161→        self.last_seen = _now_iso()
+   162→   162→
+   163→   163→    def add_error(self, error: str) -> None:
+   164→   164→        """Añade un error al historial (con cap)."""
+   165→   165→        self.errors.append(error)
+   166→   166→        if len(self.errors) > self.MAX_ERRORS:
+   167→   167→            self.errors = self.errors[-self.MAX_ERRORS:]
+   168→   168→
+   169→   169→    @property
+   170→   170→    def avg_latency_ms(self) -> float:
+   171→   171→        if not self._latencies:
+   172→   172→            return 0.0
+   173→   173→        return sum(self._latencies) / len(self._latencies)
+   174→   174→
+   175→   175→    @property
+   176→   176→    def success_rate(self) -> float:
+   177→   177→        total = self.success_count + self.failure_count
+   178→   178→        if total == 0:
+   179→   179→            return 1.0
+   180→   180→        return self.success_count / total
+   181→   181→
+   182→   182→    @property
+   183→   183→    def uptime_s(self) -> float:
+   184→   184→        """Segundos desde created_at (aproximado, basado en epoch)."""
+   185→   185→        try:
+   186→   186→            created = datetime.fromisoformat(self.created_at).timestamp()
+   187→   187→            return _now_epoch() - created
+   188→   188→        except (ValueError, OSError):
+   189→   189→            return 0.0
+   190→   190→
+   191→   191→    @property
+   192→   192→    def is_healthy(self) -> bool:
+   193→   193→        """True si health_state es ALIVE o IDLE."""
+   194→   194→        return self.health_state in (HealthState.ALIVE, HealthState.IDLE)
+   195→   195→
+   196→   196→    @property
+   197→   197→    def is_available(self) -> bool:
+   198→   198→        """True si está disponible para selección (no DEAD/ERROR/STOPPED)."""
+   199→   199→        return (
+   200→   200→            self.status in (AgentStatus.IDLE, AgentStatus.CREATED)
+   201→   201→            and self.health_state in (HealthState.ALIVE, HealthState.IDLE)
+   202→   202→        )
+   203→   203→
+   204→   204→    # ------------------------------------------------------------------
+   205→   205→    # Capabilities
+   206→   206→    # ------------------------------------------------------------------
+   207→   207→
+   208→   208→    def provides(self, capability: str) -> bool:
+   209→   209→        """True si el agente provee la capability (con wildcard match)."""
+   210→   210→        for cap in self.provided_capabilities:
+   211→   211→            # Match exacto.
+   212→   212→            if cap == capability:
+   213→   213→                return True
+   214→   214→            # Match wildcard: cap="code.*" matches capability="code.generate".
+   215→   215→            if cap.endswith(".*"):
+   216→   216→                prefix = cap[:-2]
+   217→   217→                if capability == prefix or capability.startswith(prefix + "."):
+   218→   218→                    return True
+   219→   219→            # Match jerárquico: cap="code" matches capability="code.generate"
+   220→   220→            # (el agente que provee "code" puede manejar sub-capabilities).
+   221→   221→            if capability.startswith(cap + "."):
+   222→   222→                return True
+   223→   223→        return False
+   224→   224→
+   225→   225→    def requires_satisfied(self, available_caps: set[str]) -> bool:
+   226→   226→        """True si todas las capabilities requeridas están disponibles."""
+   227→   227→        for req in self.required_capabilities:
+   228→   228→            if not any(
+   229→   229→                req == c or req.startswith(c + ".") or
+   230→   230→                (c.endswith(".*") and (req == c[:-2] or req.startswith(c[:-2] + ".")))
+   231→   231→                for c in available_caps
+   232→   232→            ):
+   233→   233→                return False
+   234→   234→        return True
+   235→   235→
+   236→   236→    # ------------------------------------------------------------------
+   237→   237→    # Serialización
+   238→   238→    # ------------------------------------------------------------------
+   239→   239→
+   240→   240→    def to_dict(self) -> dict[str, Any]:
+   241→   241→        return {
+   242→   242→            "id": self.id,
+   243→   243→            "name": self.name,
+   244→   244→            "version": self.version,
+   245→   245→            "description": self.description,
+   246→   246→            "provided_capabilities": list(self.provided_capabilities),
+   247→   247→            "required_capabilities": list(self.required_capabilities),
+   248→   248→            "preferred_capabilities": list(self.preferred_capabilities),
+   249→   249→            "priority": self.priority,
+   250→   250→            "status": self.status.value,
+   251→   251→            "metadata": dict(self.metadata),
+   252→   252→            "created_at": self.created_at,
+   253→   253→            "last_seen": self.last_seen,
+   254→   254→            "last_heartbeat": self.last_heartbeat,
+   255→   255→            "health_state": self.health_state.value,
+   256→   256→            "errors": list(self.errors),
+   257→   257→            "uptime_s": round(self.uptime_s, 2),
+   258→   258→            "usage_count": self.usage_count,
+   259→   259→            "success_count": self.success_count,
+   260→   260→            "failure_count": self.failure_count,
+   261→   261→            "success_rate": round(self.success_rate, 4),
+   262→   262→            "total_duration_ms": round(self.total_duration_ms, 2),
+   263→   263→            "avg_latency_ms": round(self.avg_latency_ms, 2),
+   264→   264→        }
+   265→   265→
+   266→   266→
+   267→   267→# ----------------------------------------------------------------------
+   268→   268→# AgentRegistry
+   269→   269→# ----------------------------------------------------------------------
+   270→   270→
+   271→   271→
+   272→   272→class AgentRegistry:
+   273→   273→    """Registro único de agentes.
+   274→   274→
+   275→   275→    Uso::
+   276→   276→
+   277→   277→        registry = AgentRegistry(capability_registry=cap_reg, event_bus=bus)
+   278→   278→        await registry.register(my_agent, provided_capabilities=["code.generate"])
+   279→   279→        record = await registry.get_by_name("my_agent")
+   280→   280→        candidates = registry.find_by_capability("code.generate")
+   281→   281→    """
+   282→   282→
+   283→   283→    HEARTBEAT_TIMEOUT_S = 60.0  # sin heartbeat en 60s → unhealthy.
+   284→   284→
+   285→   285→    def __init__(
+   286→   286→        self,
+   287→   287→        *,
+   288→   288→        capability_registry: CapabilityRegistry | None = None,
+   289→   289→        event_bus: Any | None = None,
+   290→   290→        heartbeat_timeout: float = 60.0,
+   291→   291→    ) -> None:
+   292→   292→        self._records: dict[str, AgentRecord] = {}  # by id
+   293→   293→        self._by_name: dict[str, str] = {}  # name -> record_id
+   294→   294→        self._cap_registry = capability_registry or CapabilityRegistry()
+   295→   295→        self._bus = event_bus
+   296→   296→        self._heartbeat_timeout = heartbeat_timeout
+   297→   297→        self._lock = asyncio.Lock()
+   298→   298→        self._heartbeat_task: asyncio.Task[None] | None = None
+   299→   299→        self._auto_discovery_hooks: list = []
+   300→   300→
+   301→   301→        # Métricas.
+   302→   302→        self._metrics = {
+   303→   303→            "registered_total": 0,
+   304→   304→            "unregistered_total": 0,
+   305→   305→            "replaced_total": 0,
+   306→   306→            "discoveries_total": 0,
+   307→   307→            "heartbeat_checks": 0,
+   308→   308→            "health_changes": 0,
+   309→   309→        }
+   310→   310→
+   311→   311→    @property
+   312→   312→    def capability_registry(self) -> CapabilityRegistry:
+   313→   313→        return self._cap_registry
+   314→   314→
+   315→   315→    @property
+   316→   316→    def event_bus(self) -> Any | None:
+   317→   317→        return self._bus
+   318→   318→
+   319→   319→    # ------------------------------------------------------------------
+   320→   320→    # Registro
+   321→   321→    # ------------------------------------------------------------------
+   322→   322→
+   323→   323→    async def register(
+   324→   324→        self,
+   325→   325→        agent: BaseAgent,
+   326→   326→        *,
+   327→   327→        provided_capabilities: list[str] | None = None,
+   328→   328→        required_capabilities: list[str] | None = None,
+   329→   329→        preferred_capabilities: list[str] | None = None,
+   330→   330→        priority: int = 0,
+   331→   331→        metadata: dict[str, Any] | None = None,
+   332→   332→        version: str = "0.1.0",
+   333→   333→        replace_existing: bool = True,
+   334→   334→    ) -> AgentRecord:
+   335→   335→        """Registra un agente.
+   336→   336→
+   337→   337→        Args:
+   338→   338→            agent:                   BaseAgent a registrar.
+   339→   339→            provided_capabilities:   Capabilities que provee.
+   340→   340→            required_capabilities:   Capabilities que necesita de otros.
+   341→   341→            preferred_capabilities:  Capabilities preferidas.
+   342→   342→            priority:                Prioridad (mayor = más prioritario).
+   343→   343→            metadata:                Metadatos libres.
+   344→   344→            version:                 Versión del agente.
+   345→   345→            replace_existing:        Si True y ya existe un agente con el
+   346→   346→                                     mismo nombre, lo reemplaza.
+   347→   347→
+   348→   348→        Returns:
+   349→   349→            El AgentRecord creado.
+   350→   350→
+   351→   351→        Raises:
+   352→   352→            ValueError: Si ya existe un agente con el mismo nombre y
+   353→   353→                replace_existing=False.
+   354→   354→            TypeError: Si el objeto no parece un BaseAgent.
+   355→   355→        """
+   356→   356→        # Duck-typing: verificar atributos clave en lugar de isinstance,
+   357→   357→        # para ser robusto frente a re-imports del módulo durante los
+   358→   358→        # tests (que crean clases BaseAgent distintas con el mismo nombre).
+   359→   359→        if not (
+   360→   360→            hasattr(agent, "name")
+   361→   361→            and hasattr(agent, "status")
+   362→   362→            and hasattr(agent, "health")
+   363→   363→            and hasattr(agent, "execute")
+   364→   364→            and hasattr(agent, "start")
+   365→   365→            and hasattr(agent, "stop")
+   366→   366→        ):
+   367→   367→            raise TypeError(
+   368→   368→                f"Expected BaseAgent (or compatible), got {type(agent).__name__}"
+   369→   369→            )
+   370→   370→
+   371→   371→        async with self._lock:
+   372→   372→            existing_id = self._by_name.get(agent.name)
+   373→   373→            if existing_id is not None:
+   374→   374→                if not replace_existing:
+   375→   375→                    raise ValueError(
+   376→   376→                        f"Agent '{agent.name}' already registered "
+   377→   377→                        f"(id={existing_id})"
+   378→   378→                    )
+   379→   379→                # Reemplazar.
+   380→   380→                old_record = self._records.pop(existing_id, None)
+   381→   381→                self._by_name.pop(agent.name, None)
+   382→   382→                self._metrics["replaced_total"] += 1
+   383→   383→                if old_record is not None:
+   384→   384→                    await self._emit("agent.removed", {
+   385→   385→                        "agent_id": old_record.id,
+   386→   386→                        "name": old_record.name,
+   387→   387→                        "reason": "replaced",
+   388→   388→                    })
+   389→   389→
+   390→   390→            record = AgentRecord(
+   391→   391→                agent=agent,
+   392→   392→                name=agent.name,
+   393→   393→                description=agent.description,
+   394→   394→                version=version,
+   395→   395→                provided_capabilities=list(provided_capabilities or []),
+   396→   396→                required_capabilities=list(required_capabilities or []),
+   397→   397→                preferred_capabilities=list(preferred_capabilities or []),
+   398→   398→                priority=priority,
+   399→   399→                metadata=dict(metadata or {}),
+   400→   400→            )
+   401→   401→            record.update_status()
+   402→   402→            record.heartbeat()
+   403→   403→            self._records[record.id] = record
+   404→   404→            self._by_name[record.name] = record.id
+   405→   405→            self._metrics["registered_total"] += 1
+   406→   406→
+   407→   407→        await self._emit("agent.registered", {
+   408→   408→            "agent_id": record.id,
+   409→   409→            "name": record.name,
+   410→   410→            "version": record.version,
+   411→   411→            "provided_capabilities": record.provided_capabilities,
+   412→   412→            "priority": record.priority,
+   413→   413→        })
+   414→   414→        logger.info(
+   415→   415→            "Registered agent '%s' (id=%s, caps=%d, priority=%d)",
+   416→   416→            record.name, record.id[:8],
+   417→   417→            len(record.provided_capabilities), record.priority,
+   418→   418→        )
+   419→   419→        return record
+   420→   420→
+   421→   421→    async def unregister(self, id_or_name: str) -> bool:
+   422→   422→        """Elimina un agente por id o nombre."""
+   423→   423→        async with self._lock:
+   424→   424→            record = self._resolve(id_or_name)
+   425→   425→            if record is None:
+   426→   426→                return False
+   427→   427→            self._records.pop(record.id, None)
+   428→   428→            self._by_name.pop(record.name, None)
+   429→   429→            self._metrics["unregistered_total"] += 1
+   430→   430→
+   431→   431→        await self._emit("agent.removed", {
+   432→   432→            "agent_id": record.id,
+   433→   433→            "name": record.name,
+   434→   434→            "reason": "unregistered",
+   435→   435→        })
+   436→   436→        logger.info("Unregistered agent '%s' (id=%s)", record.name, record.id[:8])
+   437→   437→        return True
+   438→   438→
+   439→   439→    async def replace(
+   440→   440→        self,
+   441→   441→        old_id_or_name: str,
+   442→   442→        new_agent: BaseAgent,
+   443→   443→        **kwargs: Any,
+   444→   444→    ) -> AgentRecord:
+   445→   445→        """Reemplaza un agente existente por uno nuevo.
+   446→   446→
+   447→   447→        Mantiene el mismo record_id si el nombre coincide; si no,
+   448→   448→        crea un nuevo registro.
+   449→   449→        """
+   450→   450→        async with self._lock:
+   451→   451→            old_record = self._resolve(old_id_or_name)
+   452→   452→            if old_record is None:
+   453→   453→                raise KeyError(f"Agent '{old_id_or_name}' not found")
+   454→   454→            # Si el nuevo agente tiene el mismo nombre, reusar el id.
+   455→   455→            if new_agent.name == old_record.name:
+   456→   456→                kwargs.setdefault("priority", old_record.priority)
+   457→   457→                kwargs.setdefault("metadata", old_record.metadata)
+   458→   458→                kwargs.setdefault("version", old_record.version)
+   459→   459→                # Eliminar el viejo (sin emitir evento de removed).
+   460→   460→                self._records.pop(old_record.id, None)
+   461→   461→                self._by_name.pop(old_record.name, None)
+   462→   462→
+   463→   463→        # Registrar el nuevo (replace_existing=True para evitar conflictos).
+   464→   464→        return await self.register(new_agent, replace_existing=True, **kwargs)
+   465→   465→
+   466→   466→    # ------------------------------------------------------------------
+   467→   467→    # Auto-discovery
+   468→   468→    # ------------------------------------------------------------------
+   469→   469→
+   470→   470→    def add_discovery_hook(self, hook) -> None:
+   471→   471→        """Añade un hook de auto-discovery.
+   472→   472→
+   473→   473→        El hook es un callable async `(registry) -> list[BaseAgent]` que
+   474→   474→        devuelve agentes descubiertos. El registry los registrará.
+   475→   475→        """
+   476→   476→        self._auto_discovery_hooks.append(hook)
+   477→   477→
+   478→   478→    async def discover(self) -> list[AgentRecord]:
+   479→   479→        """Ejecuta todos los hooks de discovery y registra los agentes.
+   480→   480→
+   481→   481→        Returns:
+   482→   482→            Lista de AgentRecord registrados (puede estar vacía).
+   483→   483→        """
+   484→   484→        discovered: list[AgentRecord] = []
+   485→   485→        for hook in self._auto_discovery_hooks:
+   486→   486→            try:
+   487→   487→                agents = await hook(self)
+   488→   488→            except Exception:  # noqa: BLE001
+   489→   489→                logger.exception("Discovery hook failed")
+   490→   490→                continue
+   491→   491→            for agent in agents:
+   492→   492→                if not isinstance(agent, BaseAgent):
+   493→   493→                    logger.warning(
+   494→   494→                        "Discovery hook returned non-BaseAgent: %s",
+   495→   495→                        type(agent).__name__,
+   496→   496→                    )
+   497→   497→                    continue
+   498→   498→                # Auto-detect capabilities from agent's objectives/tools.
+   499→   499→                caps = self._infer_capabilities(agent)
+   500→   500→                try:
+   501→   501→                    record = await self.register(
+   502→   502→                        agent,
+   503→   503→                        provided_capabilities=caps,
+   504→   504→                        replace_existing=True,
+   505→   505→                    )
+   506→   506→                    discovered.append(record)
+   507→   507→                    self._metrics["discoveries_total"] += 1
+   508→   508→                except Exception:  # noqa: BLE001
+   509→   509→                    logger.exception(
+   510→   510→                        "Failed to register discovered agent '%s'",
+   511→   511→                        agent.name,
+   512→   512→                    )
+   513→   513→        if discovered:
+   514→   514→            logger.info("Discovered and registered %d agents", len(discovered))
+   515→   515→        return discovered
+   516→   516→
+   517→   517→    def _infer_capabilities(self, agent: BaseAgent) -> list[str]:
+   518→   518→        """Infiere capabilities de un agente a partir de sus objetivos y tools.
+   519→   519→
+   520→   520→        Heurística simple: si el agente tiene `default_objectives` o
+   521→   521→        `objectives` que coinciden con categorías de capabilities, las
+   522→   522→        deriva. Si tiene `tools`, los mapea a capabilities.
+   523→   523→        """
+   524→   524→        caps: list[str] = []
+   525→   525→        objectives = list(getattr(agent, "objectives", []) or [])
+   526→   526→        tools = list(getattr(agent, "tools", []) or [])
+   527→   527→
+   528→   528→        # Mapping heurístico objetivo → capability.
+   529→   529→        obj_to_cap = {
+   530→   530→            "plan": "planning",
+   531→   531→            "planning": "planning",
+   532→   532→            "decompose": "planning",
+   533→   533→            "workflow": "workflow",
+   534→   534→            "code": "code.generate",
+   535→   535→            "refactor": "code.refactor",
+   536→   536→            "fix": "code.fix",
+   537→   537→            "test": "code.test",
+   538→   538→            "implement": "code.generate",
+   539→   539→            "review": "code.review",
+   540→   540→            "audit": "code.review",
+   541→   541→            "security": "code.review",
+   542→   542→            "git": "git.commit",
+   543→   543→            "commit": "git.commit",
+   544→   544→            "branch": "git.branch",
+   545→   545→            "merge": "git.merge",
+   546→   546→            "push": "git.push",
+   547→   547→            "terminal": "terminal.execute",
+   548→   548→            "execute": "terminal.execute",
+   549→   549→            "shell": "terminal.execute",
+   550→   550→            "memory": "memory.store",
+   551→   551→            "store": "memory.store",
+   552→   552→            "retrieve": "memory.retrieve",
+   553→   553→            "research": "research",
+   554→   554→            "investigate": "research",
+   555→   555→            "summarize": "research.summarize",
+   556→   556→            "search": "web.search",
+   557→   557→        }
+   558→   558→        for obj in objectives:
+   559→   559→            obj_lower = obj.lower()
+   560→   560→            if obj_lower in obj_to_cap:
+   561→   561→                cap = obj_to_cap[obj_lower]
+   562→   562→                if cap not in caps:
+   563→   563→                    caps.append(cap)
+   564→   564→
+   565→   565→        # Mapping heurístico tool → capability.
+   566→   566→        tool_to_cap = {
+   567→   567→            "file_tool": "filesystem.read",
+   568→   568→            "terminal_tool": "terminal.execute",
+   569→   569→            "system_tool": "terminal.execute",
+   570→   570→            "git": "git.commit",
+   571→   571→            "memory_store": "memory.store",
+   572→   572→            "vector_index": "memory.search",
+   573→   573→            "web_search": "web.search",
+   574→   574→            "doc_fetch": "documentation.lookup",
+   575→   575→            "planner": "planning",
+   576→   576→            "dag_builder": "workflow.create",
+   577→   577→            "linter": "code.review",
+   578→   578→            "static_analyzer": "code.review",
+   579→   579→            "refactor": "code.refactor",
+   580→   580→            "fix": "code.fix",
+   581→   581→            "test_gen": "code.test",
+   582→   582→        }
+   583→   583→        for tool in tools:
+   584→   584→            tool_lower = tool.lower()
+   585→   585→            if tool_lower in tool_to_cap:
+   586→   586→                cap = tool_to_cap[tool_lower]
+   587→   587→                if cap not in caps:
+   588→   588→                    caps.append(cap)
+   589→   589→
+   590→   590→        return caps
+   591→   591→
+   592→   592→    # ------------------------------------------------------------------
+   593→   593→    # Consultas
+   594→   594→    # ------------------------------------------------------------------
+   595→   595→
+   596→   596→    def get(self, id_or_name: str) -> AgentRecord | None:
+   597→   597→        """Busca un agente por id o nombre."""
+   598→   598→        return self._resolve(id_or_name)
+   599→   599→
+   600→   600→    def get_by_name(self, name: str) -> AgentRecord | None:
+   601→   601→        """Busca un agente por nombre."""
+   602→   602→        record_id = self._by_name.get(name)
+   603→   603→        if record_id is None:
+   604→   604→            return None
+   605→   605→        return self._records.get(record_id)
+   606→   606→
+   607→   607→    def get_by_id(self, agent_id: str) -> AgentRecord | None:
+   608→   608→        """Busca un agente por id."""
+   609→   609→        return self._records.get(agent_id)
+   610→   610→
+   611→   611→    def get_all(self) -> list[AgentRecord]:
+   612→   612→        """Devuelve todos los registros."""
+   613→   613→        return list(self._records.values())
+   614→   614→
+   615→   615→    def exists(self, id_or_name: str) -> bool:
+   616→   616→        """True si el agente está registrado."""
+   617→   617→        return self._resolve(id_or_name) is not None
+   618→   618→
+   619→   619→    def names(self) -> list[str]:
+   620→   620→        """Devuelve los nombres de todos los agentes registrados."""
+   621→   621→        return list(self._by_name.keys())
+   622→   622→
+   623→   623→    def find_by_capability(
+   624→   624→        self,
+   625→   625→        capability: str,
+   626→   626→        *,
+   627→   627→        only_available: bool = True,
+   628→   628→    ) -> list[AgentRecord]:
+   629→   629→        """Devuelve agentes que proveen una capability.
+   630→   630→
+   631→   631→        Args:
+   632→   632→            capability:      Nombre o patrón de la capability.
+   633→   633→            only_available:  Si True, sólo devuelve agentes disponibles
+   634→   634→                             (IDLE/CREATED + healthy).
+   635→   635→        """
+   636→   636→        result: list[AgentRecord] = []
+   637→   637→        for record in self._records.values():
+   638→   638→            if only_available and not record.is_available:
+   639→   639→                continue
+   640→   640→            if record.provides(capability):
+   641→   641→                result.append(record)
+   642→   642→        # Ordenar por prioridad (desc) y luego por usage_count (asc,
+   643→   643→        # para balanceo).
+   644→   644→        result.sort(key=lambda r: (-r.priority, r.usage_count))
+   645→   645→        return result
+   646→   646→
+   647→   647→    def find_by_capability_pattern(
+   648→   648→        self,
+   649→   649→        pattern: str,
+   650→   650→        *,
+   651→   651→        only_available: bool = True,
+   652→   652→    ) -> list[AgentRecord]:
+   653→   653→        """Como find_by_capability pero con soporte de wildcards.
+   654→   654→
+   655→   655→        Ej: "code.*" devuelve agentes que proveen code.generate,
+   656→   656→        code.review, etc.
+   657→   657→        """
+   658→   658→        if pattern == "*":
+   659→   659→            return [
+   660→   660→                r for r in self._records.values()
+   661→   661→                if not only_available or r.is_available
+   662→   662→            ]
+   663→   663→        # Expandir el patrón contra las provided_capabilities de cada agente.
+   664→   664→        result: list[AgentRecord] = []
+   665→   665→        for record in self._records.values():
+   666→   666→            if only_available and not record.is_available:
+   667→   667→                continue
+   668→   668→            for cap in record.provided_capabilities:
+   669→   669→                cap_obj = Capability(name=cap)
+   670→   670→                if cap_obj.matches(pattern) or _pattern_matches_cap(pattern, cap):
+   671→   671→                    result.append(record)
+   672→   672→                    break
+   673→   673→        result.sort(key=lambda r: (-r.priority, r.usage_count))
+   674→   674→        return result
+   675→   675→
+   676→   676→    # ------------------------------------------------------------------
+   677→   677→    # Health / heartbeat
+   678→   678→    # ------------------------------------------------------------------
+   679→   679→
+   680→   680→    def heartbeat(self, id_or_name: str) -> bool:
+   681→   681→        """Registra un heartbeat para un agente."""
+   682→   682→        record = self._resolve(id_or_name)
+   683→   683→        if record is None:
+   684→   684→            return False
+   685→   685→        record.heartbeat()
+   686→   686→        return True
+   687→   687→
+   688→   688→    def update_health(self) -> int:
+   689→   689→        """Actualiza el estado de salud de todos los agentes.
+   690→   690→
+   691→   691→        Returns el número de agentes cuyo health_state cambió.
+   692→   692→        """
+   693→   693→        changes = 0
+   694→   694→        now_epoch = _now_epoch()
+   695→   695→        for record in self._records.values():
+   696→   696→            old_state = record.health_state
+   697→   697→            record.update_status()
+   698→   698→            # Si no hay heartbeat reciente, marcar como DEAD.
+   699→   699→            try:
+   700→   700→                last_hb = datetime.fromisoformat(record.last_heartbeat).timestamp()
+   701→   701→                if now_epoch - last_hb > self._heartbeat_timeout:
+   702→   702→                    if record.health_state != HealthState.DEAD:
+   703→   703→                        record.health_state = HealthState.DEAD
+   704→   704→            except (ValueError, OSError):
+   705→   705→                pass
+   706→   706→            if record.health_state != old_state:
+   707→   707→                changes += 1
+   708→   708→                # Emitir evento de cambio de health (best-effort).
+   709→   709→                if self._bus is not None:
+   710→   710→                    try:
+   711→   711→                        asyncio.create_task(self._emit(
+   712→   712→                            "agent.health.changed",
+   713→   713→                            {
+   714→   714→                                "agent_id": record.id,
+   715→   715→                                "name": record.name,
+   716→   716→                                "old_state": old_state.value,
+   717→   717→                                "new_state": record.health_state.value,
+   718→   718→                            },
+   719→   719→                        ))
+   720→   720→                    except Exception:  # noqa: BLE001
+   721→   721→                        pass
+   722→   722→        self._metrics["heartbeat_checks"] += 1
+   723→   723→        self._metrics["health_changes"] += changes
+   724→   724→        return changes
+   725→   725→
+   726→   726→    def health(self) -> dict[str, Any]:
+   727→   727→        """Health check de todos los agentes."""
+   728→   728→        records = self.get_all()
+   729→   729→        summary: dict[str, int] = {s.value: 0 for s in HealthState}
+   730→   730→        for r in records:
+   731→   731→            summary[r.health_state.value] += 1
+   732→   732→        return {
+   733→   733→            "total": len(records),
+   734→   734→            "summary": summary,
+   735→   735→            "healthy": summary.get(HealthState.ALIVE.value, 0)
+   736→   736→                       + summary.get(HealthState.IDLE.value, 0),
+   737→   737→            "degraded": summary.get(HealthState.BUSY.value, 0)
+   738→   738→                        + summary.get(HealthState.ERROR.value, 0),
+   739→   739→            "dead": summary.get(HealthState.DEAD.value, 0),
+   740→   740→            "agents": {r.name: r.health_state.value for r in records},
+   741→   741→        }
+   742→   742→
+   743→   743→    async def start_heartbeat_loop(self, interval: float = 10.0) -> None:
+   744→   744→        """Arranca un background task que actualiza health periódicamente."""
+   745→   745→        if self._heartbeat_task is not None:
+   746→   746→            return
+   747→   747→
+   748→   748→        async def _loop() -> None:
+   749→   749→            while True:
+   750→   750→                try:
+   751→   751→                    self.update_health()
+   752→   752→                except Exception:  # noqa: BLE001
+   753→   753→                    logger.exception("Heartbeat loop failed")
+   754→   754→                await asyncio.sleep(interval)
+   755→   755→
+   756→   756→        self._heartbeat_task = asyncio.create_task(_loop())
+   757→   757→        logger.info("AgentRegistry heartbeat loop started (interval=%.1fs)", interval)
+   758→   758→
+   759→   759→    async def stop_heartbeat_loop(self) -> None:
+   760→   760→        """Detiene el heartbeat loop."""
+   761→   761→        if self._heartbeat_task is not None:
+   762→   762→            self._heartbeat_task.cancel()
+   763→   763→            try:
+   764→   764→                await self._heartbeat_task
+   765→   765→            except asyncio.CancelledError:
+   766→   766→                pass
+   767→   767→            self._heartbeat_task = None
+   768→   768→            logger.info("AgentRegistry heartbeat loop stopped")
+   769→   769→
+   770→   770→    # ------------------------------------------------------------------
+   771→   771→    # Métricas
+   772→   772→    # ------------------------------------------------------------------
+   773→   773→
+   774→   774→    def metrics(self) -> dict[str, Any]:
+   775→   775→        """Métricas del registry."""
+   776→   776→        records = self.get_all()
+   777→   777→        return {
+   778→   778→            **self._metrics,
+   779→   779→            "registry_size": len(records),
+   780→   780→            "available_count": sum(1 for r in records if r.is_available),
+   781→   781→            "healthy_count": sum(1 for r in records if r.is_healthy),
+   782→   782→            "total_usage": sum(r.usage_count for r in records),
+   783→   783→            "total_successes": sum(r.success_count for r in records),
+   784→   784→            "total_failures": sum(r.failure_count for r in records),
+   785→   785→            "avg_success_rate": (
+   786→   786→                round(
+   787→   787→                    sum(r.success_rate for r in records) / len(records), 4
+   788→   788→                ) if records else 0.0
+   789→   789→            ),
+   790→   790→            "capability_registry": self._cap_registry.metrics(),
+   791→   791→        }
+   792→   792→
+   793→   793→    # ------------------------------------------------------------------
+   794→   794→    # Internos
+   795→   795→    # ------------------------------------------------------------------
+   796→   796→
+   797→   797→    def _resolve(self, id_or_name: str) -> AgentRecord | None:
+   798→   798→        """Resuelve un id o nombre a un AgentRecord."""
+   799→   799→        # Por id.
+   800→   800→        record = self._records.get(id_or_name)
+   801→   801→        if record is not None:
+   802→   802→            return record
+   803→   803→        # Por nombre.
+   804→   804→        record_id = self._by_name.get(id_or_name)
+   805→   805→        if record_id is not None:
+   806→   806→            return self._records.get(record_id)
+   807→   807→        return None
+   808→   808→
+   809→   809→    # ------------------------------------------------------------------
+   810→   810→    # Sprint 2.3 — API simplificada + soporte de Manifest
+   811→   811→    # ------------------------------------------------------------------
+   812→   812→
+   813→   813→    async def register_simple(
+   814→   814→        self,
+   815→   815→        agent: BaseAgent,
+   816→   816→        *,
+   817→   817→        capabilities: list[str] | None = None,
+   818→   818→        priority: int = 0,
+   819→   819→    ) -> AgentRecord:
+   820→   820→        """Registro simplificado (Sprint 2.3).
+   821→   821→
+   822→   822→        Equivalente a::
+   823→   823→
+   824→   824→            await registry.register(
+   825→   825→                agent,
+   826→   826→                provided_capabilities=capabilities,
+   827→   827→                priority=priority,
+   828→   828→            )
+   829→   829→
+   830→   830→        Si `capabilities` es None, se infieren automáticamente desde los
+   831→   831→        `objectives` y `tools` del agente.
+   832→   832→        """
+   833→   833→        if capabilities is None:
+   834→   834→            capabilities = self._infer_capabilities(agent)
+   835→   835→        return await self.register(
+   836→   836→            agent,
+   837→   837→            provided_capabilities=capabilities,
+   838→   838→            priority=priority,
+   839→   839→            replace_existing=True,
+   840→   840→        )
+   841→   841→
+   842→   842→    async def register_with_manifest(
+   843→   843→        self,
+   844→   844→        agent: BaseAgent,
+   845→   845→        manifest: "AgentManifest",
+   846→   846→    ) -> AgentRecord:
+   847→   847→        """Registra un agente usando un `AgentManifest` explícito.
+   848→   848→
+   849→   849→        El manifest aporta id, name, version, capabilities, priority y
+   850→   850→        metadata de forma declarativa. El agente subyacente debe tener
+   851→   851→        el mismo `name` que el manifest (o se le asigna).
+   852→   852→        """
+   853→   853→        return await self.register(
+   854→   854→            agent,
+   855→   855→            provided_capabilities=list(manifest.capabilities),
+   856→   856→            priority=manifest.priority,
+   857→   857→            metadata=dict(manifest.metadata),
+   858→   858→            version=manifest.version,
+   859→   859→            replace_existing=True,
+   860→   860→        )
+   861→   861→
+   862→   862→    def list_agents(self) -> list[AgentRecord]:
+   863→   863→        """Alias simplificado de `get_all()` (Sprint 2.3).
+   864→   864→
+   865→   865→        Devuelve todos los registros del registry.
+   866→   866→        """
+   867→   867→        return self.get_all()
+   868→   868→
+   869→   869→    def list_manifests(self) -> list["AgentManifest"]:
+   870→   870→        """Devuelve el manifest de cada agente registrado (Sprint 2.3).
+   871→   871→
+   872→   872→        Si un agente no tiene manifest explícito, se construye uno
+   873→   873→        sintético a partir de su AgentRecord.
+   874→   874→        """
+   875→   875→        from .manifest import AgentManifest
+   876→   876→        manifests: list[AgentManifest] = []
+   877→   877→        for record in self.get_all():
+   878→   878→            # Si el agente expone un método manifest(), usarlo.
+   879→   879→            agent = record.agent
+   880→   880→            if hasattr(agent, "manifest") and callable(agent.manifest):
+   881→   881→                try:
+   882→   882→                    m = agent.manifest()
+   883→   883→                    # Duck-typing: aceptar cualquier objeto con los campos
+   884→   884→                    # clave (id, name, version, capabilities, priority) para
+   885→   885→                    # ser robusto frente a re-imports del módulo AgentManifest.
+   886→   886→                    if (
+   887→   887→                        hasattr(m, "id")
+   888→   888→                        and hasattr(m, "name")
+   889→   889→                        and hasattr(m, "version")
+   890→   890→                        and hasattr(m, "capabilities")
+   891→   891→                        and hasattr(m, "priority")
+   892→   892→                    ):
+   893→   893→                        manifests.append(m)  # type: ignore[arg-type]
+   894→   894→                        continue
+   895→   895→                except Exception:  # noqa: BLE001
+   896→   896→                    pass
+   897→   897→            # Sintetizar desde el record.
+   898→   898→            manifests.append(AgentManifest(
+   899→   899→                id=record.name.lower().replace(" ", "_"),
+   900→   900→                name=record.name,
+   901→   901→                version=record.version,
+   902→   902→                description=record.description,
+   903→   903→                capabilities=list(record.provided_capabilities),
+   904→   904→                priority=record.priority,
+   905→   905→                metadata=dict(record.metadata),
+   906→   906→            ))
+   907→   907→        return manifests
+   908→   908→
+   909→   909→    def find_by_capability_simple(self, capability: str) -> list[AgentRecord]:
+   910→   910→        """Búsqueda simplificada por capability (Sprint 2.3).
+   911→   911→
+   912→   912→        A diferencia de `find_by_capability`, no filtra por disponibilidad:
+   913→   913→        devuelve todos los agentes que proveen la capability, ordenados
+   914→   914→        por prioridad desc y usage asc.
+   915→   915→
+   916→   916→        Útil para discovery: "¿qué agentes saben de python?"
+   917→   917→        """
+   918→   918→        results: list[AgentRecord] = []
+   919→   919→        for record in self._records.values():
+   920→   920→            if record.provides(capability):
+   921→   921→                results.append(record)
+   922→   922→        results.sort(key=lambda r: (-r.priority, r.usage_count))
+   923→   923→        return results
+   924→   924→
+   925→   925→    def find_manifests_by_capability(self, capability: str) -> list["AgentManifest"]:
+   926→   926→        """Devuelve manifests de agentes que proveen una capability (Sprint 2.3)."""
+   927→   927→        return [
+   928→   928→            m for m in self.list_manifests()
+   929→   929→            if m.has_capability(capability)
+   930→   930→        ]
+   931→   931→
+   932→   932→    async def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
+   933→   933→        """Emite un evento al EventBus (best-effort)."""
+   934→   934→        if self._bus is None:
+   935→   935→            return
+   936→   936→        try:
+   937→   937→            await self._bus.publish(event_type, source="agent_registry", payload=payload)
+   938→   938→        except Exception:  # noqa: BLE001
+   939→   939→            logger.exception("Failed to emit event '%s'", event_type)
+   940→   940→
+   941→   941→
+   942→   942→def _pattern_matches_cap(pattern: str, cap_name: str) -> bool:
+   943→   943→    """True si `pattern` (con wildcards) matchea `cap_name`."""
+   944→   944→    if pattern == "*":
+   945→   945→        return True
+   946→   946→    if pattern == cap_name:
+   947→   947→        return True
+   948→   948→    if pattern.endswith(".*"):
+   949→   949→        prefix = pattern[:-2]
+   950→   950→        return cap_name == prefix or cap_name.startswith(prefix + ".")
+   951→   951→    # Match jerárquico: pattern="code" matches cap_name="code.generate".
+   952→   952→    if cap_name.startswith(pattern + "."):
+   953→   953→        return True
+   954→   954→    return False
+   955→   955→
+   956→   956→
+   957→   957→__all__ = ["AgentRecord", "AgentRegistry"]
+   958→   958→
