@@ -2,7 +2,87 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Sprint 2.9 — Agent Communication & Collaboration Layer
+## [Unreleased] — Sprint 2.10 — Final Multi-Agent Architecture Audit & Phase 2 Closure
+
+### Sprint 2.10 — Final Multi-Agent Architecture Audit & Phase 2 Closure
+
+#### Fixed (bug fixes from architecture audit)
+- **M1** (`planner/integration.py`): `WorkflowEngineAdapter.to_workflow()`
+  produced a broken DAG — `Step` auto-generated a UUID `id` that didn't
+  match any dependency. Fixed by passing `id=task.id` so step IDs match
+  task IDs and `task.dependencies` resolves correctly. Added test
+  `test_workflow_adapter_dag_is_valid` to verify the fix.
+- **M4** (`communication/bus.py`): In wire mode (wrapping a real
+  `MessageBus`), point-to-point `TASK_RESPONSE` messages were not routed
+  to the `CollaborationManager`'s broadcast subscription, causing
+  `wait_for_response` to always time out for async agents. Fixed by
+  notifying wrapper broadcast subscribers for point-to-point messages
+  in wire mode.
+- **m1** (`planner/integration.py`): `_record_to_info` clobbered a
+  legitimate 0% success rate to 100% (`0.0 or 1.0` evaluates to `1.0`).
+  Fixed by using an explicit `None` check.
+- **m3** (`communication/collaboration.py`): Race condition in
+  `_ensure_auto_subscribe` — two concurrent first-time calls could each
+  create a subscription, leaking a token and double-routing every
+  message. Fixed by adding an `asyncio.Lock` with double-check.
+- **m5** (`communication/integration.py`): Removed dead code
+  (`collab.metadata_if_any = orch_result` wrote to a non-existent
+  attribute).
+- **m6** (`communication/collaboration.py`): `HANDOFF` collaborations
+  never reached a terminal state (no `HANDOFF_ACK` message type exists).
+  Fixed by marking the collaboration `COMPLETED` immediately after
+  sending the `HANDOFF` message (fire-and-forget semantics).
+
+#### Added (documentation — architecture contracts)
+- **`docs/agent-architecture-contract.md`**: canonical contract for
+  creating, registering, communicating with, and delegating to agents.
+  Defines the two `BaseAgent` hierarchies, agent lifecycle states,
+  `AgentMessage` protocol, collaboration patterns, and what NOT to do.
+- **`docs/module-responsibility-map.md`**: maps every module in the
+  monorepo to its single responsibility. Includes the dependency graph,
+  allowed/forbidden cross-package imports, known duplications (3× Task,
+  3× Scheduler, 2× EventBus, 4× Orchestrator, etc.), and a decision
+  tree for adding new features.
+- **`docs/developer-guide.md`**: guide for developers starting work
+  after Sprint 2.10. Covers project structure, the `src` namespace
+  collision (known debt), code conventions, testing strategy, debugging
+  tips, and Phase 3 preparation.
+- **`docs/sprint-2.10-final-audit-report.md`**: comprehensive audit
+  report documenting all problems found, solutions applied, final
+  architecture state, and Phase 3 readiness assessment.
+
+#### Audit findings (documented, not fixed — would require breaking changes)
+- **`src` namespace collision** (critical packaging debt): every
+  package's source dir is named `src/`, making them mutually
+  non-installable. Workarounds: `liz_core.py` shim, per-test `sys.path`
+  manipulation. Recommended fix: Sprint 3.1.
+- **3× `Task` classes** (core, multiagent.queue, planner) with 3
+  different `TaskStatus` enums. Recommended: extract common base into
+  `shared/`.
+- **3× `Scheduler` classes** (time-based, step-based, plan-based).
+  Recommended: rename for clarity.
+- **2× `EventBus`** (core vs. multiagent.workflow) with incompatible
+  APIs. Recommended: standardise on the richer multiagent version.
+- **4× `*Orchestrator`** (core, AgentOrchestrator, WorkflowOrchestrator,
+  RegistryOrchestrator). Recommendation: keep as-is (different layers).
+- **2× `Planner`** (core heuristic vs. planner.TaskPlanner).
+  Recommended: deprecate core.Planner.
+- **4× memory subsystems** (memory.MemoryManager, multiagent.AgentMemory,
+  multiagent.memctx, multiagent.semantic). Recommended: consolidate.
+- **No runtime circular imports** (verified). Lazy imports used correctly.
+
+#### Compatibility
+- **No breaking changes** — all 990 tests pass, 0 regressions.
+- 6 bug fixes are backward-compatible (they fix incorrect behavior).
+- All existing public APIs remain unchanged.
+
+#### Phase 2 closure
+- Phase 2 (Sprints 2.1-2.10) is complete.
+- The multi-agent architecture is stable, documented, and ready for
+  Phase 3 (autonomous agents, advanced tools, complex planning,
+  Claude Code-style execution).
+
+## [0.9.0] — Sprint 2.9 — Agent Communication & Collaboration Layer
 
 ### Sprint 2.9 — Agent Communication & Collaboration Layer
 

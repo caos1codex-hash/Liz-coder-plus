@@ -340,6 +340,23 @@ class AgentMessageBus:
                 # Wire mode: convert and forward to the underlying bus.
                 wire_msg = message.to_message()
                 delivered = await self._bus.publish(wire_msg)
+                # In wire mode, the underlying MessageBus only invokes
+                # broadcast subscribers for broadcast messages (receiver="*").
+                # Point-to-point messages go only to the receiver's direct
+                # subscribers, so the CollaborationManager's broadcast
+                # subscription never fires for responses. To fix this, we
+                # also notify our wrapper's broadcast subscribers for
+                # point-to-point messages (broadcast messages are already
+                # handled by the underlying bus). This ensures the
+                # CollaborationManager's auto-subscribe handler sees all
+                # messages, including point-to-point responses, without
+                # double-delivering broadcast messages.
+                if not message.is_broadcast:
+                    for handler in list(self._broadcast_subscribers.values()):
+                        try:
+                            await handler(message)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("wrapper broadcast handler raised")
             self._metrics["delivered_total"] += delivered
         except Exception as exc:
             raise MessageDeliveryError(message.message_id, str(exc)) from exc

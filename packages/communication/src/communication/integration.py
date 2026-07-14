@@ -151,8 +151,6 @@ class OrchestratorAdapter:
             payload=task,
             timeout=timeout,
         )
-        if orch_result is not None:
-            collab.metadata_if_any = orch_result  # type: ignore[attr-defined]
         return collab
 
     async def request_help(

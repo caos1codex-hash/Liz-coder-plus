@@ -213,6 +213,8 @@ class CollaborationManager:
         self._by_task: dict[str, list[Collaboration]] = {}
         # Futures for pending wait_for_response calls.
         self._response_futures: dict[str, asyncio.Future[AgentMessage]] = {}
+        # Lock to guard _ensure_auto_subscribe against concurrent calls.
+        self._subscribe_lock = asyncio.Lock()
         # Metrics.
         self._metrics = {
             "started_total": 0,
@@ -382,8 +384,12 @@ class CollaborationManager:
         """Agent A hands off a task to agent B.
 
         Sends a ``HANDOFF`` message. The collaboration is marked
-        COMPLETED once the handoff is acknowledged (or immediately if
-        no acknowledgement is expected).
+        COMPLETED immediately after the handoff message is sent, since
+        HANDOFF is a fire-and-forget operation (no acknowledgement
+        protocol is defined). If the receiver sends a TASK_RESPONSE
+        later, it will still be routed to this collaboration via
+        ``route_message`` and can be retrieved with
+        :meth:`wait_for_response`.
         """
         collab = Collaboration(
             initiator=from_agent,
@@ -401,7 +407,13 @@ class CollaborationManager:
         )
         collab.initial_message = msg
         collab.messages.append(msg)
+        # Mark COMPLETED immediately — HANDOFF is fire-and-forget.
+        # The collaboration remains queryable; if the receiver sends a
+        # TASK_RESPONSE, ``route_message`` will still update the
+        # collaboration's messages list.
+        collab.complete(result={"handed_off": True})
         await self._register(collab)
+        self._metrics["completed_total"] += 1
         self._replay_history_for(collab)
         return collab
 
@@ -631,15 +643,25 @@ class CollaborationManager:
                 self._unregister(c)
 
     async def _ensure_auto_subscribe(self) -> None:
-        """Ensure the auto-subscription to the bus is active."""
+        """Ensure the auto-subscription to the bus is active.
+
+        Uses an ``asyncio.Lock`` to prevent two concurrent first-time
+        calls from each creating a subscription (which would leak a
+        token and double-route every message).
+        """
         if self._auto_subscription_token is not None:
             return
-        try:
-            self._auto_subscription_token = await self._bus.subscribe_broadcast(
-                self._on_bus_message
-            )
-        except Exception:  # noqa: BLE001
-            logger.debug("auto-subscribe failed; route_message must be called manually")
+        async with self._subscribe_lock:
+            # Re-check inside the lock — another coroutine may have
+            # completed the subscription while we were waiting.
+            if self._auto_subscription_token is not None:
+                return
+            try:
+                self._auto_subscription_token = await self._bus.subscribe_broadcast(
+                    self._on_bus_message
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("auto-subscribe failed; route_message must be called manually")
 
     def _replay_history_for(self, collab: Collaboration) -> None:
         """Re-play any bus messages that match ``collab.correlation_id``.

@@ -230,7 +230,9 @@ async def test_handoff():
         task_id="t1",
         reason="specialized",
     )
-    assert collab.status == CollaborationStatus.INITIATED
+    # HANDOFF is fire-and-forget: the collaboration is marked COMPLETED
+    # immediately after the message is sent.
+    assert collab.status == CollaborationStatus.COMPLETED
     assert len(received) == 1
     assert received[0].message_type == MessageType.HANDOFF
     assert received[0].payload["reason"] == "specialized"

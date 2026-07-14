@@ -109,10 +109,15 @@ def _record_to_info(record: Any) -> AgentInfo:
     Uses ``record.name`` as the agent id (human-readable) so that the
     planner's matcher produces user-friendly assignments like
     ``assigned_agent='coder'`` instead of UUIDs.
+
+    Note: we use ``_safe_float`` instead of ``or`` for ``success_rate``
+    because ``0.0 or 1.0`` evaluates to ``1.0``, which would clobber a
+    legitimate 0% success rate (an agent that has failed every task).
     """
     # AgentRecord provides: id (UUID), name, provided_capabilities,
     # priority, is_healthy, is_available, usage_count, success_rate,
     # avg_latency_ms, metadata.
+    sr = getattr(record, "success_rate", None)
     return AgentInfo(
         id=getattr(record, "name", None) or record.id,
         name=getattr(record, "name", record.id),
@@ -121,7 +126,7 @@ def _record_to_info(record: Any) -> AgentInfo:
         healthy=bool(_safe_attr(record, "is_healthy", default=True)),
         available=bool(_safe_attr(record, "is_available", default=True)),
         usage_count=int(getattr(record, "usage_count", 0) or 0),
-        success_rate=float(getattr(record, "success_rate", 1.0) or 1.0),
+        success_rate=float(sr) if sr is not None else 1.0,
         avg_latency_ms=float(getattr(record, "avg_latency_ms", 0.0) or 0.0),
         metadata=dict(getattr(record, "metadata", {}) or {}),
     )
@@ -281,7 +286,13 @@ class WorkflowEngineAdapter:
         try:
             wf = Workflow(name=f"plan-{plan.id[:12]}", description=plan.objective)
             for task in plan.tasks.values():
+                # Use the planner task's id as the step id so that
+                # task.dependencies (which reference planner task ids)
+                # resolve correctly in the workflow DAG. Without this,
+                # Step auto-generates a UUID that doesn't match any
+                # dependency, breaking the DAG.
                 step = Step(
+                    id=task.id,
                     name=task.title,
                     agent=task.assigned_agent or "planner",
                     action=task.metadata.get("action", "execute"),

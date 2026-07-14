@@ -248,6 +248,29 @@ def test_workflow_adapter_step_deps_preserved(registry):
         assert set(step.depends_on) == set(task.dependencies)
 
 
+def test_workflow_adapter_dag_is_valid(registry):
+    """Verify the M1 fix: step IDs match task IDs so the DAG is valid.
+
+    Before the fix, Step auto-generated a UUID id that didn't match
+    any dependency, causing DAG.validate() to report broken deps and
+    WorkflowEngine.submit() to reject the workflow.
+    """
+    p = build_integrated_planner(registry=registry)
+    plan = p.create_plan("Create an app")
+    wf = WorkflowEngineAdapter.to_workflow(plan)
+    # The DAG must be valid (no broken deps).
+    v = wf.dag.validate()
+    assert v.ok, f"DAG has broken deps: {v.broken_deps}"
+    assert v.cycles == []
+    # Step IDs must match task IDs.
+    for step in wf.steps.values():
+        assert step.id in plan.tasks, f"step {step.id} not in plan.tasks"
+    # Dependencies must reference existing steps.
+    for step in wf.steps.values():
+        for dep in step.depends_on:
+            assert dep in wf.steps, f"dep {dep} not in wf.steps"
+
+
 def test_workflow_adapter_without_multiagent_raises():
     # Force the import to fail by temporarily removing multiagent from path.
     # This is hard to test reliably; skip if multiagent is importable.
