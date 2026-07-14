@@ -30,6 +30,7 @@ from .lifecycle import (
     can_transition_lifecycle,
 )
 from .manifest import AgentManifest, standard_manifests
+from .orchestrator import ExecutionResult, RegistryOrchestrator
 from .resolver import CapabilityResolver, ResolutionResult, ResolverWeights
 
 __all__ = [
@@ -42,9 +43,11 @@ __all__ = [
     "Capability",
     "CapabilityRegistry",
     "CapabilityResolver",
+    "ExecutionResult",
     "LifecycleHealth",
     "LifecycleManager",
     "LifecycleState",
+    "RegistryOrchestrator",
     "ResolutionResult",
     "ResolverWeights",
     "can_transition_lifecycle",
