@@ -3,6 +3,10 @@
 The ContextEngine queries the MemoryEngine, selects relevant records,
 deduplicates, trims to size limits, and produces a ContextSnapshot
 ready for consumption.
+
+Sprint 2.7 extension: optionally integrates with SemanticRetrievalEngine
+to include semantically relevant records in context building. The semantic
+layer is completely optional — the engine works identically without it.
 """
 
 from __future__ import annotations
@@ -10,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .engine import MemoryEngine
 from .events import MemoryEventBus, MemoryEventType
@@ -21,6 +25,9 @@ from .models import (
     _serialize_value,
     _utcnow,
 )
+
+if TYPE_CHECKING:
+    from ..semantic.retrieval import SemanticRetrievalEngine
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +46,9 @@ class ContextRequest:
         include_metadata: Whether to include full metadata in the snapshot.
         priority_threshold: Minimum priority to include.
         max_records: Maximum number of records (before trimming).
+        use_semantic: Whether to use semantic search for candidate fetching
+            (requires a SemanticRetrievalEngine to be set).
+        semantic_top_k: How many semantic results to include.
     """
 
     target: str = ""
@@ -50,6 +60,8 @@ class ContextRequest:
     include_metadata: bool = True
     priority_threshold: int = 0
     max_records: int = 200
+    use_semantic: bool = False
+    semantic_top_k: int = 20
 
 
 @dataclass
@@ -71,23 +83,36 @@ class ContextEngine:
 
     The engine is independent of storage — it reads from a MemoryEngine
     and assembles relevant, deduplicated, trimmed context.
+
+    Sprint 2.7: Optionally uses SemanticRetrievalEngine for semantic
+    candidate fetching when use_semantic=True in the request.
     """
 
     def __init__(
         self,
         memory_engine: MemoryEngine,
         event_bus: Optional[MemoryEventBus] = None,
+        semantic_retrieval: Optional["SemanticRetrievalEngine"] = None,
     ) -> None:
         self._engine = memory_engine
         self._event_bus = event_bus or memory_engine.event_bus
+        self._semantic_retrieval = semantic_retrieval
         self._build_count = 0
         self._trim_count = 0
+        self._semantic_contexts = 0
+
+    def set_semantic_retrieval(
+        self, retrieval: Optional["SemanticRetrievalEngine"]
+    ) -> None:
+        """Set or replace the semantic retrieval engine."""
+        self._semantic_retrieval = retrieval
 
     @property
     def stats(self) -> Dict[str, int]:
         return {
             "contexts_built": self._build_count,
             "contexts_trimmed": self._trim_count,
+            "semantic_contexts": self._semantic_contexts,
         }
 
     async def build_context(
@@ -96,7 +121,7 @@ class ContextEngine:
         """Build a context snapshot based on the request parameters.
 
         Process:
-        1. Fetch candidate records from MemoryEngine
+        1. Fetch candidate records (optionally via semantic search)
         2. Deduplicate by content hash
         3. Sort by priority (desc) and recency (desc)
         4. Trim to fit within token budget
@@ -163,6 +188,7 @@ class ContextEngine:
                 "tokens_estimate": token_estimate,
                 "was_trimmed": trim_count > 0,
                 "build_time_ms": elapsed_ms,
+                "used_semantic": request.use_semantic,
             },
         )
 
@@ -261,10 +287,40 @@ class ContextEngine:
     async def _fetch_candidates(
         self, request: ContextRequest
     ) -> List[MemoryRecord]:
-        """Fetch candidate records from memory engine."""
-        all_records: List[MemoryRecord] = []
+        """Fetch candidate records from memory engine.
 
-        # If specific types requested, query each
+        If request.use_semantic is True and a semantic retrieval engine
+        is available, also fetches semantically relevant records.
+        """
+        all_records: List[MemoryRecord] = []
+        seen_ids: set[str] = set()
+
+        # --- Semantic candidates (Sprint 2.7) ---
+        if (
+            request.use_semantic
+            and self._semantic_retrieval is not None
+            and request.query
+        ):
+            self._semantic_contexts += 1
+            try:
+                semantic_records = await self._semantic_retrieval.retrieve_for_context(
+                    query=request.query,
+                    target=request.target,
+                    top_k=request.semantic_top_k,
+                    owner=request.owner,
+                    tags=request.tags,
+                )
+                for rec in semantic_records:
+                    if rec.id not in seen_ids:
+                        all_records.append(rec)
+                        seen_ids.add(rec.id)
+            except Exception:
+                logger.warning(
+                    "semantic retrieval failed, falling back to text search",
+                    exc_info=True,
+                )
+
+        # --- Standard text-based candidates ---
         if request.memory_types:
             for mt in request.memory_types:
                 records = await self._engine.search(
@@ -274,7 +330,10 @@ class ContextEngine:
                     query=request.query,
                     limit=request.max_records,
                 )
-                all_records.extend(records)
+                for rec in records:
+                    if rec.id not in seen_ids:
+                        all_records.append(rec)
+                        seen_ids.add(rec.id)
         else:
             records = await self._engine.search(
                 owner=request.owner,
@@ -282,7 +341,10 @@ class ContextEngine:
                 query=request.query,
                 limit=request.max_records,
             )
-            all_records.extend(records)
+            for rec in records:
+                if rec.id not in seen_ids:
+                    all_records.append(rec)
+                    seen_ids.add(rec.id)
 
         return all_records
 

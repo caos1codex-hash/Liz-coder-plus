@@ -137,6 +137,29 @@ from .memctx import (
     WorkflowMemory,
 )
 
+# Sprint 2.7 — Semantic Memory & Retrieval Engine
+from .semantic import (
+    DummyEmbeddingProvider,
+    EmbeddingCache,
+    EmbeddingProvider,
+    EmbeddingResult,
+    InMemoryVectorStore,
+    RankingConfig,
+    RankingEngine,
+    RankingSignal,
+    RetrievalMode,
+    RetrievalRequest,
+    RetrievalResult,
+    SemanticEventType,
+    SemanticIndex,
+    SemanticMetrics,
+    SemanticRetrievalEngine,
+    SemanticValidator,
+    VectorSearchResult,
+    VectorStore,
+    extend_memory_events,
+)
+
 __all__ = [
     # Base
     "BaseAgent",
@@ -268,4 +291,24 @@ __all__ = [
     "ProjectMemory",
     "SearchResult",
     "WorkflowMemory",
+    # Sprint 2.7 — Semantic Memory & Retrieval Engine
+    "DummyEmbeddingProvider",
+    "EmbeddingCache",
+    "EmbeddingProvider",
+    "EmbeddingResult",
+    "InMemoryVectorStore",
+    "RankingConfig",
+    "RankingEngine",
+    "RankingSignal",
+    "RetrievalMode",
+    "RetrievalRequest",
+    "RetrievalResult",
+    "SemanticEventType",
+    "SemanticIndex",
+    "SemanticMetrics",
+    "SemanticRetrievalEngine",
+    "SemanticValidator",
+    "VectorSearchResult",
+    "VectorStore",
+    "extend_memory_events",
 ]
