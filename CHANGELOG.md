@@ -2,6 +2,86 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] — Sprint 2.7 — Semantic Memory & Retrieval Engine
+
+### Sprint 2.7 — Semantic Memory & Retrieval Engine
+
+#### Added
+- **`EmbeddingProvider`** (`semantic/embedding.py`): interfaz abstracta para
+  generación de embeddings. Operaciones: embed_text, embed_batch, dimensions,
+  provider_name, health, compute_text_hash.
+- **`DummyEmbeddingProvider`**: proveedor determinista para testing. Genera
+  vectores pseudo-aleatorios normalizados a unit length. Seed configurable,
+  sin dependencias externas.
+- **`EmbeddingResult`**: resultado de embedding con vector, text_hash, provider,
+  dimensions, latency_ms, metadata. Métodos: normalized(), magnitude(), to_dict().
+- **`VectorStore`** (`semantic/vector_store.py`): interfaz abstracta para
+  almacenamiento vectorial. Operaciones: add, add_batch, update, remove, search,
+  get, exists, clear, size, stats.
+- **`InMemoryVectorStore`**: backend en memoria con búsqueda por fuerza bruta
+  (cosine similarity). Thread-safe, validación de dimensiones opcional, filtros
+  por metadata.
+- **`VectorSearchResult`**: resultado de búsqueda vectorial con id, vector,
+  score y metadata.
+- **Funciones de similitud**: cosine_similarity, euclidean_distance, dot_product.
+- **`SemanticIndex`** (`semantic/semantic_index.py`): puente entre embeddings
+  y MemoryEngine. Indexa registros, mantiene sincronización, búsqueda por
+  similitud con filtros (type, owner, tags).
+- **`SemanticRetrievalEngine`** (`semantic/retrieval.py`): motor de búsqueda
+  unificado con tres modos: SEMANTIC, TEXT, HYBRID. Métodos de conveniencia:
+  semantic_search, text_search, hybrid_search, retrieve_for_context.
+- **`RetrievalRequest`**: parámetros de búsqueda (query, mode, top_k, min_score,
+  filtros, ranking_config).
+- **`RetrievalResult`**: resultado con ranked results, contadores y metadata.
+- **`RankingEngine`** (`semantic/ranking.py`): ranking multi-signal con 5 señales
+  configurables: semantic_similarity (0.5), priority (0.2), recency (0.15),
+  frequency (0.1), memory_type (0.05). Recency usa decaimiento exponencial.
+- **`RankingConfig`**: configuración con pesos, preferencias por tipo, half-life
+  de recencia, threshold mínimo.
+- **`RankedResult`**: resultado rankeado con final_score, signal_scores y
+  matched_by para transparencia.
+- **`EmbeddingCache`** (`semantic/cache.py`): cache LRU thread-safe para
+  embeddings. Estadísticas hit/miss/eviction, batch get/put, max_size configurable.
+- **`SemanticMetrics`** (`semantic/metrics.py`): métricas de la capa semántica:
+  embeddings generados, búsquedas (semantic/hybrid/text), cache hit rate,
+  tamaño del índice, uso de memoria. Latencias con percentiles.
+- **`SemanticValidator`** (`semantic/security.py`): validación de vectores
+  (NaN, Inf, dimensiones, zero vectors), queries vacías, consistencia de índice,
+  detección de duplicados, sanitización.
+- **`SemanticEventType`** (`semantic/events.py`): 8 nuevos tipos de eventos:
+  embedding_created, embedding_updated, semantic_search, hybrid_search,
+  vector_index_updated, ranking_completed, cache_hit, cache_miss.
+
+#### Changed
+- **`ContextEngine`**: agregado parámetro opcional `semantic_retrieval` en
+  constructor. Nuevo método `set_semantic_retrieval()`. ContextRequest ahora
+  soporta `use_semantic=True` y `semantic_top_k`. `_fetch_candidates()` incluye
+  resultados semánticos cuando está habilitado. Fallback automático a búsqueda
+  textual si la búsqueda semántica falla.
+- **`__init__.py`**: export de 18 nuevos símbolos del módulo semantic.
+
+#### Tests
+- 157 tests nuevos en `tests/semantic/`:
+  - `test_embedding_provider.py` (20 tests)
+  - `test_vector_store.py` (30 tests)
+  - `test_semantic_index.py` (18 tests)
+  - `test_retrieval.py` (18 tests)
+  - `test_ranking.py` (20 tests)
+  - `test_cache.py` (24 tests)
+  - `test_context_integration.py` (12 tests)
+  - `test_metrics.py` (15 tests)
+- Todos los 246 tests de Sprint 2.6 siguen pasando (403 total memory+semantic).
+
+#### Documentation
+- `docs/sprint-2.7-audit.md`: auditoría de integración
+- `docs/semantic-memory.md`: documentación del sistema
+- `docs/vector-store.md`: guía de vector stores
+- `docs/embedding-providers.md`: guía de proveedores de embeddings
+- `docs/retrieval-engine.md`: guía del motor de recuperación
+- `docs/sprint-2.7-report.md`: informe final del sprint
+
+---
+
 ## [Unreleased] — Sprint 2.6 — Memory & Context Engine
 
 ### Sprint 2.6 — Memory & Context Engine
