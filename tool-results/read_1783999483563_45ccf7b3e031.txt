@@ -1,0 +1,1755 @@
+     1→# Arquitectura — Liz Coder Plus
+     2→
+     3→> Visión general de la arquitectura del proyecto.
+     4→> Versión: `v0.2.1` — Sprint 1.9 (Motor LLM: Providers, Streaming, Contexto y Prompt).
+     5→
+     6→## 1. Visión general
+     7→
+     8→Liz Coder Plus es un asistente IA de escritorio para Windows. La
+     9→arquitectura sigue un patrón **cliente-servidor local**: una aplicación
+    10→desktop (WinUI 3) se comunica con un backend (FastAPI) que orquesta
+    11→agentes, memoria y herramientas. Toda la lógica de negocio vive en el
+    12→backend; el desktop es una capa fina de presentación.
+    13→
+    14→```
+    15→┌─────────────────┐     WebSocket      ┌─────────────────┐
+    16→│   Desktop App   │ ◄───────────────► │     Backend     │
+    17→│   (WinUI 3)     │     REST + JSON   │   (FastAPI)     │
+    18→│      MVVM       │                   │                 │
+    19→└─────────────────┘                   └────────┬────────┘
+    20→                                               │
+    21→                                               ▼
+    22→                                      ┌────────────────┐
+    23→                                      │  Orchestrator  │
+    24→                                      │    (Core)      │
+    25→                                      └────────┬───────┘
+    26→                                               │
+    27→                       ┌───────────────┬───────┴────────┬───────────────┐
+    28→                       ▼               ▼                ▼               ▼
+    29→                 ┌──────────┐    ┌──────────┐     ┌──────────┐    ┌──────────┐
+    30→                 │  Agents  │    │  Memory  │     │  Tools   │    │  Shared  │
+    31→                 │          │    │ (SQLite) │     │          │    │  Types   │
+    32→                 └──────────┘    └──────────┘     └──────────┘    └──────────┘
+    33→```
+    34→
+    35→## 2. Capas
+    36→
+    37→### 2.1 Desktop (`apps/desktop`)
+    38→
+    39→- **Tecnología:** WinUI 3 / .NET 8.
+    40→- **Patrón:** MVVM (CommunityToolkit.Mvvm).
+    41→- **Responsabilidad:** presentar la interfaz al usuario y reenviar
+    42→  entradas al backend por WebSocket.
+    43→- **Sin lógica de negocio.** Toda decisión se delega al backend.
+    44→
+    45→### 2.2 Backend (`apps/backend`)
+    46→
+    47→- **Tecnología:** Python 3.11+ / FastAPI / WebSocket.
+    48→- **Responsabilidad:** recibir mensajes, invocar el orquestador,
+    49→  gestionar permisos, exponer endpoints.
+    50→- **Endpoints previstos:**
+    51→  - `GET /health` — estado del servicio.
+    52→  - `GET /status` — información de versión y entorno.
+    53→  - `WS /ws` — canal bidireccional con el desktop.
+    54→  - `POST /chat` — envío de mensaje (alternativa a WebSocket).
+    55→  - `POST /tools/execute` — ejecución de herramientas.
+    56→
+    57→### 2.3 Core (`packages/core`)
+    58→
+    59→- **Orquestador:** punto central que recibe cada mensaje, decide el
+    60→  agente, coordina memoria y herramientas, y emite eventos. Soporta
+    61→  lifecycle (`initialize()` / `shutdown()`), timeout configurable
+    62→  por agente, y ejecución de herramientas con permisos.
+    63→- **EventBus:** bus pub/sub interno (`event_bus.py`) para desacoplar
+    64→  módulos. Soporta subscribe, unsubscribe, publish con retorno de
+    65→  contador, y fault isolation entre handlers.
+    66→- **Eventos:** el catálogo está en `packages/core/src/events.py`.
+    67→  Incluye ciclos de vida de usuario, agentes, herramientas, permisos
+    68→  y sistema.
+    69→- **AgentRouter:** decide qué agente atiende cada mensaje. Las reglas
+    70→  son predicados async evaluados en orden; la primera coincidencia
+    71→  gana. Valida el Protocol `Agent` al registrar. Incluye `EchoAgent`
+    72→  como fallback que usa el contexto (historial, modo, idioma).
+    73→- **ToolExecutor:** ejecuta herramientas con gating de permisos.
+    74→  Flujo: permission check → deny/confirm/allow → ejecución → evento.
+    75→- **Protocols:** contratos estructurales en `protocols.py` para
+    76→  `Agent`, `Memory` y `Tool` (duck-typing con `runtime_checkable`).
+    77→- **SessionManager:** almacena en memoria el historial temporal de
+    78→  cada conversación (hasta 200 turnos), el idioma preferido del usuario
+    79→  y el último modo de permiso solicitado. Integrado con memoria
+    80→  persistente vía `MemoryManager`.
+    81→- **WebSocketManager:** registro de conexiones activas. Soporta
+    82→  broadcast global, broadcast por sesión y envío dirigido.
+    83→
+    84→El paquete `core` se expone al backend a través de un shim
+    85→`packages/core/liz_core.py` que evita colisiones de namespace `src`
+    86→entre el backend y el core.
+    87→
+    88→### 2.4 Memory (`packages/memory`)
+    89→
+    90→- **Backend funcional:** SQLite (vía aiosqlite, acceso asíncrono nativo).
+    91→- **Componentes:**
+    92→  - `MemoryManager`: API pública del sistema de memoria. Gestiona la
+    93→    inicialización, mantiene un cache RAM por sesión y delega al
+    94→    repositorio para persistencia.
+    95→  - `DatabaseManager`: gestiona la conexión SQLite, ejecuta migraciones
+    96→    automáticas y expone métodos de bajo nivel.
+    97→  - `ConversationRepository`: capa de acceso a datos con operaciones
+    98→    CRUD asíncronas sobre la tabla `conversations`.
+    99→  - `ConversationMessage`: modelo de datos (dataclass) para mensajes.
+   100→- **Flujo de persistencia:** cuando el `SessionManager` tiene un
+   101→  `MemoryManager` adjuntado, cada `append_turn()` persiste el mensaje
+   102→  tanto en la cache RAM como en SQLite. Al reiniciar, `restore_session()`
+   103→  recarga el historial desde la base de datos.
+   104→- **Configuración:** `config/development.json` → sección `memory`.
+   105→- **Contrato genérico (futuro):** el Protocol `MemoryBackend` de
+   106→  `packages/memory/src/base.py` está disponible para backends alternativos.
+   107→
+   108→### 2.5 Agents (`packages/agents`)
+   109→
+   110→- **BaseAgent:** clase abstracta con ciclo de vida completo.
+   111→  - **Estados:** `CREATED → READY → RUNNING → COMPLETED/FAILED → SHUTDOWN`.
+   112→  - **Métodos:** `initialize()`, `shutdown()`, `safe_handle()` (con
+   113→    aislamiento de errores y métricas), `handle()` (abstracto).
+   114→  - **Metadata:** `name`, `description`, `version`, `capabilities`,
+   115→    `agent_id`, `state`, `tasks_completed`, `tasks_failed`.
+   116→  - Los agentes que fallan pueden reintentar (estado `FAILED` permite
+   117→    nuevas ejecuciones).
+   118→- **AgentRegistry:** registro con validación del Protocol `Agent`.
+   119→- **Contrato dual:** los agentes pueden heredar de `BaseAgent` (con
+   120→  lifecycle) o simplemente satisfacer el Protocol `Agent` (duck-typing).
+   121→  El Orchestrator acepta ambos.
+   122→
+   123→### 2.6 Tools (`packages/tools`)
+   124→
+   125→- **BaseTool:** clase abstracta con lifecycle completo, validación y
+   126→  métricas (Sprint 1.6).
+   127→  - **Identidad:** `name`, `tool_id` (UUID), `description`, `version`.
+   128→  - **Categorías:** `SHELL`, `FILE`, `WEB`, `APP`, `SYSTEM`, `CUSTOM`
+   129→    (enum `ToolCategory`).
+   130→  - **Nivel de permiso:** `LOW`, `MEDIUM`, `HIGH` (enum `PermissionLevel`).
+   131→  - **Estados:** `AVAILABLE → EXECUTING → COMPLETED/ERROR`, más `DISABLED`.
+   132→  - **Validación:** `validate_input(params)` y `validate_output(result)`
+   133→    con soporte para `parameters_schema` declarativo.
+   134→  - **Métricas:** `executions`, `failures`, `last_error`, `total_time_ms`.
+   135→  - **Contrato:** subclases implementan `_execute(params, context) -> dict`;
+   136→    el método `execute()` de la base gestiona lifecycle, validación y métricas.
+   137→  - **Contexto de ejecución:** `execute(params, context={session_id, agent_name})`.
+   138→- **ToolRegistry:** registro mejorado con validación duck-typing.
+   139→  - Soporta fuentes: `INTERNAL`, `EXTERNAL`, `PLUGIN` (enum `ToolSource`).
+   140→  - Políticas de duplicados: `OVERWRITE`, `RAISE`, `SKIP` (enum `DuplicatePolicy`).
+   141→  - Activación/desactivación individual de herramientas.
+   142→  - Búsqueda por categoría, nivel de permiso y fuente.
+   143→  - Método `summary()` con estadísticas del registro.
+   144→- **Herramientas base (Sprint 1.6):**
+   145→  - `FileTool` — leer, escribir, listar archivos y directorios. MEDIUM.
+   146→  - `SystemTool` — información del sistema y estado. LOW.
+   147→  - `TerminalTool` — ejecutar comandos shell. HIGH.
+   148→- **Seguridad:** toda ejecución pasa por `ToolExecutor` que consulta
+   149→  `PermissionService` antes de ejecutar. Decisiones: `allow`,
+   150→  `confirm`, `deny`, `timeout`, `cancelled`.
+   151→
+   152→### 2.7 Shared (`packages/shared`)
+   153→
+   154→- **Contenido:** modelos Pydantic, enumeraciones, tipos y utilidades.
+   155→- **Regla:** este paquete **no depende de ningún otro** del proyecto.
+   156→  Puede ser importado por todos sin crear ciclos.
+   157→
+   158→## 3. Flujo de un mensaje
+   159→
+   160→1. El usuario escribe un mensaje en el Desktop (`MainWindow` → `ChatService`).
+   161→2. El `ChatService` abre (o reutiliza) una conexión WebSocket a `/ws/chat`
+   162→   y envía un `WebSocketChatRequest`:
+   163→   ```json
+   164→   { "message": "Hola Liz", "session_id": "uuid", "mode": "confirmation" }
+   165→   ```
+   166→3. El backend recibe el JSON, valida los campos y delega en el
+   167→   `WebSocketManager` para registrar/enrutar la conexión.
+   168→4. El `Orchestrator.handle_message()` se ejecuta:
+   169→   - Persiste el turno del usuario en el `SessionManager` (RAM + SQLite
+   170→     si hay un `MemoryManager` adjuntado).
+   171→   - Consulta el `AgentRouter` para seleccionar un agente.
+   172→   - Invoca al agente, que produce una respuesta de texto.
+   173→   - Persiste el turno del asistente (RAM + SQLite).
+   174→5. El orquestador devuelve la respuesta al endpoint WebSocket.
+   175→6. El endpoint emite uno o varios `WebSocketChatResponse` (chunks
+   176→   mientras se genera el texto, luego un sobre final con
+   177→   `status="completed"`).
+   178→7. El `ChatService` del Desktop recibe los sobres y los reenvía al
+   179→   hilo de UI, que los acumula en la burbuja del asistente.
+   180→8. Cuando llega el sobre final, la burbuja se cierra con el texto
+   181→   completo.
+   182→
+   183→## 4. Decisiones de diseño
+   184→
+   185→| Decisión                        | Justificación                                              |
+   186→|---------------------------------|------------------------------------------------------------|
+   187→| Monorepo                        | Facilita refactorizaciones entre módulos.                  |
+   188→| Cliente-servidor local          | Permite futuro despliegue multi-dispositivo.               |
+   189→| WebSocket bidireccional         | Conversación en tiempo real, sin polling.                  |
+   190→| MVVM en desktop                 | Separa UI de lógica y facilita pruebas.                    |
+   191→| Protocolos/ABC en Python        | Contratos explícitos entre módulos.                        |
+   192→| EventBus interno                | Desacopla módulos y habilita auditoría y monitoreo.       |
+   193→| Agent lifecycle (BaseAgent)      | Estados explícitos, métricas, recuperación.              |
+   194→| Timeout en agentes              | `asyncio.wait_for` con configurable por Orchestrator.     |
+   195→| Protocol validation             | `isinstance` en registro para prevenir errores runtime.  |
+   196→| Permisos en backend             | El desktop nunca ejecuta acciones peligrosas.              |
+   197→| Configuración por entorno       | Diferencia desarrollo / producción.                        |
+   198→| SQLite vía aiosqlite            | Acceso asíncrono nativo, sin overhead de SQLAlchemy.      |
+   199→| Cache RAM + persistencia       | Lecturas rápidas desde RAM, persistencia en SQLite.       |
+   200→| Tool lifecycle (BaseTool)       | Estados explícitos, validación, métricas por instancia.   |
+   201→| Permission levels (LOW/MED/HIGH) | Política granular basada en riesgo de la herramienta.   |
+   202→| Timeout y cancelación en tools   | `asyncio.wait_for` + `Task.cancel()` en ToolExecutor.       |
+   203→
+   204→## 5. Evolución prevista
+   205→
+   206→- **Sprint 2:** primer agente conversacional con LLM.
+   207→- **Sprint 3:** permisos en producción + plugins de herramientas.
+   208→- **Sprint 4:** UI desktop con chat.
+   209→- **Sprint 5:** integración real con modelos IA.
+   210→- **Sprint 6+:** voz, imágenes, control avanzado del PC.
+   211→
+   212→## 6. Sistema de Memoria — Detalle Técnico
+   213→
+   214→### 6.1 Componentes
+   215→
+   216→El sistema de memoria se implementa en `packages/memory/src/memory/` y
+   217→consta de cuatro componentes con responsabilidades bien definidas:
+   218→
+   219→```
+   220→MemoryManager (API pública)
+   221→    ├── add_message(session_id, role, content, metadata)
+   222→    ├── get_context(session_id, limit?) -> list[dict]
+   223→    ├── clear_session(session_id) -> bool
+   224→    └── close()
+   225→        │
+   226→        ▼
+   227→ConversationRepository (acceso a datos)
+   228→    ├── save_message(session_id, role, content, metadata) -> int
+   229→    ├── get_session_history(session_id, limit?) -> list[dict]
+   230→    ├── delete_session(session_id) -> bool
+   231→    └── count_messages(session_id) -> int
+   232→        │
+   233→        ▼
+   234→DatabaseManager (conexión SQLite)
+   235→    ├── initialize()
+   236→    ├── connection() -> Connection
+   237→    ├── execute(sql, params) -> Cursor
+   238→    ├── execute_script(sql)
+   239→    └── close()
+   240→        │
+   241→        ▼
+   242→SQLite (tabla conversations + índices)
+   243→```
+   244→
+   245→### 6.2 Flujo de Datos Completo
+   246→
+   247→```
+   248→Usuario
+   249→  │
+   250→  ▼  WebSocket JSON
+   251→Backend FastAPI (/ws/chat)
+   252→  │
+   253→  ▼  Validación con WebSocketChatRequest (Pydantic)
+   254→Orchestrator.handle_message()
+   255→  │
+   256→  ├─→ SessionManager.append_turn(role="user", ...)
+   257→  │       │
+   258→  │       ├─→ RAM cache (list[ChatTurn])
+   259→  │       └─→ MemoryManager.add_message() ──→ SQLite (si adjuntado)
+   260→  │
+   261→  ▼  AgentRouter.route(message, context)
+   262→Agente (EchoAgent / futuro LLM)
+   263→  │
+   264→  ▼  response_text
+   265→Orchestrator
+   266→  │
+   267→  ├─→ SessionManager.append_turn(role="assistant", ...)
+   268→  │       │
+   269→  │       ├─→ RAM cache
+   270→  │       └─→ MemoryManager.add_message() ──→ SQLite
+   271→  │
+   272→  ▼  Envelope dict {type, content, status, session_id}
+   273→WebSocket → Cliente Desktop
+   274→```
+   275→
+   276→### 6.3 Inicialización en el Backend
+   277→
+   278→Durante el `lifespan` de FastAPI (`apps/backend/src/api/main.py`),
+   279→se ejecuta `_initialize_memory()` que:
+   280→
+   281→1. Lee `config/development.json` → sección `memory`.
+   282→2. Si `memory.enabled == true`, crea un `MemoryManager`.
+   283→3. Inicializa la base de datos SQLite en `memory.path`.
+   284→4. Llama a `orchestrator.attach_memory(mm)`, que también
+   285→   adjunta el memory al `SessionManager`.
+   286→
+   287→Si la inicialización falla (por ejemplo, sin `aiosqlite`), el sistema
+   288→continúa funcionando con sesiones en RAM únicamente.
+   289→
+   290→### 6.4 Validaciones Implementadas (Sprint 1.4)
+   291→
+   292→| Componente | Validación |
+   293→|---|---|
+   294→| `MemoryManager.add_message()` | Revisa que role ∈ {user, assistant, system}; que content no sea vacío. |
+   295→| `ConversationRepository.save_message()` | Valida role contra `_VALID_ROLES`. |
+   296→| `ConversationRepository` | Verifica que `lastrowid` no sea None tras INSERT. |
+   297→| `DatabaseManager._run_migration()` | Captura `OSError` al leer archivos y errores SQL al ejecutar. |
+   298→| `Orchestrator.handle_message()` | Separa `ValueError/TypeError` (validación) de errores inesperados. |
+   299→
+   300→### 6.5 Código Muerto Documentado
+   301→
+   302→Los siguientes archivos existen como esqueletos para futuros sprints
+   303→y NO deben ser eliminados sin considerar el roadmap:
+   304→
+   305→| Archivo | Estado | Sprint Previsto |
+   306→|---|---|---|
+   307→| `packages/memory/src/base.py` | Protocol genérico, sin consumidores aún | Sprint 3 |
+   308→| `packages/memory/src/models.py` | Modelos SQLAlchemy, reservados para migraciones complejas | Sprint 3 |
+   309→| `packages/memory/src/sqlite.py` | Implementación SQLAlchemy, reservada como alternativa | Sprint 3 |
+   310→| `packages/agents/` | Paquete completo, sin uso | Sprint 2 |
+   311→| `packages/tools/` | Paquete funcional con 3 herramientas base | Sprint 1.6 (activo) |
+   312→| `apps/backend/src/core/orchestrator.py` | Stub, reemplazado por `packages/core/` | Eliminar en Sprint 2 |
+   313→| `apps/backend/src/events/bus.py` | EventBus original, reemplazado por `packages/core/src/event_bus.py` | Eliminar en Sprint 2 |
+   314→
+   315→Nota: `packages/agents/` y `packages/tools/` ya NO son código muerto —
+   316→sus clases base y registros son funcionales desde Sprint 1.5.
+   317→
+   318→### 6.6 Cómo Extender el Sistema de Memoria
+   319→
+   320→Para agregar un nuevo backend de almacenamiento (ej. PostgreSQL):
+   321→
+   322→1. Crear una clase en `packages/memory/src/memory/` que implemente los
+   323→   mismos métodos que `ConversationRepository`.
+   324→2. Crear un `DatabaseManager` alternativo o extender el existente.
+   325→3. Actualizar `MemoryManager.initialize()` para soportar el nuevo
+   326→   proveedor según `config.memory.provider`.
+   327→4. El `SessionManager` no necesita cambios porque interactúa
+   328→   exclusivamente a través de `MemoryManager`.
+   329→
+   330→## 7. Sistema de Agentes — Detalle Técnico (Sprint 1.5)
+   331→
+   332→### 7.1 Tipos de Agentes
+   333→
+   334→| Tipo | Descripción | Sprint |
+   335→|---|---|---|
+   336→| EchoAgent | Fallback que reconoce mensajes en español, usa contexto | Sprint 1 (activo) |
+   337→| Conversacional | Diálogo general con LLM | Sprint 2 |
+   338→| Código | Asistencia de programación | Sprint 2 |
+   339→| Sistema | Control del PC y herramientas | Sprint 3 |
+   340→| Investigación | Búsqueda y síntesis | Futuro |
+   341→
+   342→### 7.2 Ciclo de Vida de un Agente
+   343→
+   344→```
+   345→nuevo BaseAgent()
+   346→    │
+   347→    ▼  state = CREATED
+   348→agente sin uso; no puede procesar mensajes
+   349→    │
+   350→    ▼  agent.initialize()
+   351→state = READY
+   352→    │
+   353→    ▼  agent.safe_handle(msg, ctx)
+   354→state = RUNNING → COMPLETED (o FAILED)
+   355→    │
+   356→    ▼  (puede recibir más mensajes desde READY/COMPLETED/FAILED)
+   357→    │
+   358→    ▼  agent.shutdown()
+   359→state = SHUTDOWN
+   360→```
+   361→
+   362→El Orchestrator gestiona el ciclo de vida de todos los agentes
+   363→registrados a través de `orchestrator.initialize()` y
+   364→`orchestrator.shutdown()`.
+   365→
+   366→### 7.3 Flujo de Ejecución con Eventos
+   367→
+   368→```
+   369→Usuario → WebSocket → Orchestrator
+   370→    │
+   371→    ├─→ emit: user.message.received
+   372→    ├─→ SessionManager.append_turn(role="user")
+   373→    ├─→ AgentRouter.route(message, context)
+   374→    ├─→ emit: agent.invoked
+   375→    ├─→ agent.handle(message, context)  [con timeout]
+   376→    ├─→ emit: agent.completed (o agent.failed)
+   377→    ├─→ SessionManager.append_turn(role="assistant")
+   378→    │
+   379→    ▼  Envelope {type, content, status, agent_name, duration_ms}
+   380→WebSocket → Cliente
+   381→```
+   382→
+   383→### 7.4 Sistema de Permisos para Herramientas
+   384→
+   385→```
+   386→Agente solicita herramienta
+   387→    │
+   388→    ▼  ToolExecutor.execute(tool, params, session_id, agent_name)
+   389→    │
+   390→    ├─→ emit: tool.requested (con agent_name, session_id, tool_id)
+   391→    ├─→ PermissionService.evaluate_tool(tool_name, level, agent_name)
+   392→    │
+   393→    ├─ decision == "deny" → emit: tool.denied → return
+   394→    ├─ decision == "confirm" → return (cliente debe aprobar)
+   395→    ├─ decision == "allow" → asyncio.wait_for(tool.execute(...), timeout)
+   396→    │       ├─ éxito → validate_output → emit: tool.executed → return
+   397→    │       ├─ timeout → cancel task → emit: tool.failed → return
+   398→    │       ├─ cancelled → emit: tool.failed → return
+   399→    │       └─ error → emit: tool.failed → return
+   400→    │
+   401→    ▼  ToolExecutionResult {
+   402→        tool_name, decision, success, output, error,
+   403→        duration_ms, agent_name, session_id, tool_id
+   404→    }
+   405→```
+   406→
+   407→Niveles de permiso (Sprint 1.6):
+   408→
+   409→| Nivel | Descripción | Ejemplos |
+   410→|---|---|---|
+   411→| LOW | Operaciones de lectura, información básica | SystemTool, FileTool.read_file |
+   412→| MEDIUM | Modificaciones controladas | FileTool.write_file |
+   413→| HIGH | Ejecución de comandos, acciones críticas | TerminalTool |
+   414→
+   415→### 7.5 Cómo Crear un Nuevo Agente
+   416→
+   417→1. Crear un archivo en `packages/agents/src/` (o importar desde otro
+   418→   paquete).
+   419→2. Heredar de `BaseAgent` o crear una clase que satisfaga el Protocol:
+   420→
+   421→   ```python
+   422→   from src.base import BaseAgent
+   423→
+   424→   class MiAgente(BaseAgent):
+   425→       name = "mi_agente"
+   426→       description = "Hace algo útil"
+   427→       capabilities = ["ejemplo"]
+   428→
+   429→       async def handle(self, message: str, context: dict) -> str:
+   430→           return f"Procesado: {message}"
+   431→   ```
+   432→
+   433→3. Registrar en el Orchestrator:
+   434→
+   435→   ```python
+   436→   orch = Orchestrator()
+   437→   orch.register_agent(MiAgente())
+   438→   await orch.initialize()  # transiciona a READY
+   439→   ```
+   440→
+   441→4. Opcionalmente agregar una regla de routing:
+   442→
+   443→   ```python
+   444→   async def es_mi_agente(msg, ctx) -> bool:
+   445→       return msg.startswith("@")
+   446→
+   447→   orch.router.add_rule("mi_agente", es_mi_agente)
+   448→   ```
+   449→
+   450→### 7.6 Estados del Orchestrator
+   451→
+   452→| Estado | Propiedad | Descripción |
+   453→|---|---|---|
+   454→| No inicializado | `is_initialized=False` | Agentes registrados pero no listos |
+   455→| Activo | `is_initialized=True, is_shutdown=False` | Listo para procesar mensajes |
+   456→| Apagado | `is_shutdown=True` | Agentes cerrados, no procesa mensajes |
+   457→
+   458→## 8. Sistema de Herramientas — Detalle Técnico (Sprint 1.6)
+   459→
+   460→### 8.1 Estructura del Paquete Tools
+   461→
+   462→```
+   463→packages/tools/src/
+   464→├── __init__.py          → API pública (BaseTool, ToolRegistry, FileTool, ...)
+   465→├── base.py             → BaseTool, ToolCategory, ToolState, PermissionLevel, ToolError
+   466→├── registry.py         → ToolRegistry, ToolSource, DuplicatePolicy, ToolRegistration
+   467→└── tools/
+   468→    ├── __init__.py      → Init del subpaquete
+   469→    ├── file_tool.py     → FileTool (read_file, write_file, list_directory)
+   470→    ├── system_tool.py   → SystemTool (info, status)
+   471→    └── terminal_tool.py → TerminalTool (run)
+   472→```
+   473→
+   474→### 8.2 Ciclo de Vida de una Herramienta
+   475→
+   476→```
+   477→nueva BaseTool()
+   478→    │
+   479→    ▼  state = AVAILABLE
+   480→herramienta lista para ejecutar
+   481→    │
+   482→    ▼  tool.execute(params, context={...})
+   483→    │   ├─ validate_input(params)  → ToolError si falla → state = ERROR
+   484→    │   ├─ state = EXECUTING
+   485→    │   ├─ _execute(params, context) → resultado
+   486→    │   ├─ validate_output(result) → ToolError si falla → state = ERROR
+   487→    │   └─ state = COMPLETED (o ERROR si excepción)
+   488→    │
+   489→    ▼  (puede ejecutarse de nuevo desde AVAILABLE/COMPLETED/ERROR)
+   490→    │
+   491→    ▼  tool.disable()
+   492→state = DISABLED  →  tool.enable()  →  state = AVAILABLE
+   493→```
+   494→
+   495→### 8.3 Flujo de Ejecución Segura
+   496→
+   497→```
+   498→Agente
+   499→  │
+   500→  ▼  solicita herramienta al Orchestrator
+   501→Orchestrator.execute_tool(tool_name, params, session_id)
+   502→  │
+   503→  ▼  ToolExecutor.execute(tool, params, session_id, agent_name, timeout)
+   504→  │
+   505→  ├─ emit: tool.requested
+   506→  ├─ PermissionService.evaluate_tool(tool_name, level=..., agent_name=...)
+   507→  │
+   508→  ├─ decision == "deny" → emit: tool.denied → return ToolExecutionResult
+   509→  ├─ decision == "confirm" → return ToolExecutionResult (esperar aprobación)
+   510→  ├─ decision == "allow" → asyncio.wait_for(tool.execute(params, context), timeout)
+   511→  │       │
+   512→  │       ├─ éxito → emit: tool.executed → return ToolExecutionResult
+   513→  │       ├─ TimeoutError → cancel task → emit: tool.failed → return
+   514→   │       ├─ CancelledError → emit: tool.failed → return
+   515→   │       └─ Exception → emit: tool.failed → return
+   516→  │
+   517→  ▼  ToolExecutionResult → Orchestrator → WebSocket → Desktop
+   518→```
+   519→
+   520→### 8.4 Niveles de Permiso y Modos
+   521→
+   522→El `PermissionService` tiene dos modos (Confirmation/Automatic) y tres
+   523→niveles de herramienta (LOW/MEDIUM/HIGH).
+   524→
+   525→**Modo Confirmation:** toda acción requiere aprobación del usuario,
+   526→independientemente del nivel.
+   527→
+   528→**Modo Automatic:**
+   529→- Herramientas con nivel <= `auto_allow_up_to` se ejecutan sin preguntar.
+   530→- Herramientas en `allowed_commands` se ejecutan sin preguntar.
+   531→- Herramientas en `denied_commands` siempre se bloquean (prioridad máxima).
+   532→- Todo lo demás requiere confirmación.
+   533→
+   534→El umbral `auto_allow_up_to` se configura con
+   535→`permission_service.set_auto_allow_up_to("medium")`.
+   536→
+   537→**Auditoría:** cada evaluación se registra en `permission_service.audit_log`
+   538→con timestamp, herramienta, agente, decisión y razón.
+   539→
+   540→### 8.5 Herramientas Base Disponibles
+   541→
+   542→| Herramienta | Categoría | Nivel | Acciones |
+   543→|---|---|---|---|
+   544→| `FileTool` | FILE | MEDIUM | `read_file`, `write_file`, `list_directory` |
+   545→| `SystemTool` | SYSTEM | LOW | `info`, `status` |
+   546→| `TerminalTool` | SHELL | HIGH | `run` |
+   547→
+   548→### 8.6 Cómo Crear una Nueva Herramienta
+   549→
+   550→1. Crear un archivo en `packages/tools/src/tools/`.
+   551→2. Heredar de `BaseTool`:
+   552→
+   553→   ```python
+   554→   from src.base import BaseTool, PermissionLevel, ToolCategory
+   555→
+   556→   class MiHerramienta(BaseTool):
+   557→       name = "mi_herramienta"
+   558→       description = "Hace algo útil"
+   559→       version = "1.0.0"
+   560→       category = ToolCategory.CUSTOM
+   561→       permission_level = PermissionLevel.LOW
+   562→
+   563→       parameters_schema = {
+   564→           "required": ["dato"],
+   565→           "properties": {
+   566→               "dato": {"type": "str", "description": "El dato"},
+   567→           },
+   568→       }
+   569→
+   570→       async def _execute(self, params, context):
+   571→           # Acceder a contexto:
+   572→           session_id = context.get("session_id", "")
+   573→           agent_name = context.get("agent_name", "")
+   574→           return {"success": True, "output": f"Procesado: {params['dato']}"}
+   575→   ```
+   576→
+   577→3. Registrar en el sistema:
+   578→
+   579→   ```python
+   580→   from src import ToolRegistry, ToolSource, MiHerramienta
+   581→
+   582→   registry = ToolRegistry()
+   583→   registry.register(MiHerramienta(), source=ToolSource.INTERNAL)
+   584→   ```
+   585→
+   586→4. Registrar también en el Orchestrator si se usa la herramienta desde agentes:
+   587→
+   588→   ```python
+   589→   tool = MiHerramienta()
+   590→   orch.register_tool(tool)
+   591→   ```
+   592→
+   593→5. (Opcional) Agregar reglas de permisos en `config/development.json`.
+   594→
+   595→## 9. Orchestrator Avanzado — Detalle Técnico (Sprint 1.7)
+   596→
+   597→Sprint 1.7 convierte al Orchestrator en el centro inteligente del
+   598→sistema, capaz de planificar, coordinar y supervisar la ejecución
+   599→de múltiples agentes, herramientas y tareas de forma segura,
+   600→escalable y observable.
+   601→
+   602→### 9.1 Visión General
+   603→
+   604→```
+   605→Usuario
+   606→  │
+   607→  ▼
+   608→Orchestrator.handle_message()
+   609→  │
+   610→  ▼
+   611→ExecutionPipeline (único punto de entrada)
+   612→  │
+   613→  ├─ 1. ValidateRequest       → valida mensaje y sesión
+   614→  ├─ 2. PublishUserMessage     → emite user.message.received
+   615→  ├─ 3. PersistUserTurn        → SessionManager.append_turn(role="user")
+   616→  ├─ 4. BuildContext           → contexto desde sesión
+   617→  ├─ 5. RetrieveMemory         → contexto desde memoria persistente
+   618→  ├─ 6. PlanExecution          → Planner (opcional)
+   619→  ├─ 7. SelectAgent            → AgentRouter.route()
+   620→  ├─ 8. CheckPermissions       → (reservado)
+   621→  ├─ 9. ExecuteAgent           → asyncio.wait_for(agent.handle, timeout)
+   622→  ├─ 10. PublishAgentResult    → emite agent.completed
+   623→  ├─ 11. UpdateMemory          → SessionManager.append_turn(role="assistant")
+   624→  │
+   625→  ▼  Envelope {type, content, status, agent_name, duration_ms, stage_timings}
+   626→WebSocket → Cliente
+   627→```
+   628→
+   629→El pipeline es **único** y **obligatorio**: ya no existen rutas
+   630→duplicadas para procesar un mensaje. Toda la lógica está en
+   631→`packages/core/src/pipeline.py` y se invoca desde
+   632→`Orchestrator.handle_message()`.
+   633→
+   634→### 9.2 Componentes Nuevos
+   635→
+   636→| Módulo | Archivo | Responsabilidad |
+   637→|---|---|---|
+   638→| `ExecutionPipeline` | `pipeline.py` | Orquesta las etapas del flujo |
+   639→| `Task` + `TaskManager` | `task.py` | Unidad de trabajo direccionable |
+   640→| `Workflow` + `WorkflowManager` | `workflow.py` | Motor de DAGs |
+   641→| `Planner` + `Plan` + `SubTask` | `planner.py` | Planificación heurística |
+   642→| `MetricsCollector` | `observability.py` | Métricas y auditoría |
+   643→| `StructuredLogger` | `observability.py` | Logs JSON con correlation_id |
+   644→
+   645→### 9.3 Execution Pipeline
+   646→
+   647→#### Etapas
+   648→
+   649→```python
+   650→DEFAULT_STAGES = [
+   651→    stage_validate_request,        # valida entrada
+   652→    stage_publish_user_message,    # emite user.message.received
+   653→    stage_persist_user_turn,       # persiste turno usuario
+   654→    stage_build_context,           # construye contexto
+   655→    stage_retrieve_memory,         # recupera memoria
+   656→    stage_plan_execution,          # invoca Planner (opcional)
+   657→    stage_select_agent,            # AgentRouter.route()
+   658→    stage_check_permissions,       # gate de permisos (reservado)
+   659→    stage_execute_agent,           # ejecuta con timeout
+   660→    stage_publish_agent_result,    # emite agent.completed
+   661→    stage_update_memory,           # persiste turno asistente
+   662→]
+   663→```
+   664→
+   665→#### Manejo de Errores
+   666→
+   667→Todas las etapas lanzan `PipelineError(stage, error_type, message)`.
+   668→El `ExecutionPipeline.run_safe()` captura estos errores, emite
+   669→`agent.failed` con el contexto de la etapa, persiste un turno de
+   670→sistema y retorna un envelope de error consistente:
+   671→
+   672→```python
+   673→{
+   674→    "type": "error",
+   675→    "content": "Lo siento, ocurrió un error al procesar tu mensaje.",
+   676→    "status": "failed",
+   677→    "session_id": "s1",
+   678→    "error": "agent_timeout",          # error_type o agent_timeout
+   679→    "stage": "stage_execute_agent",    # qué etapa falló
+   680→    "duration_ms": 0,
+   681→}
+   682→```
+   683→
+   684→#### Timing por Etapa
+   685→
+   686→El pipeline registra el tiempo de cada etapa en
+   687→`result["stage_timings"]`:
+   688→
+   689→```python
+   690→{
+   691→    "stage_validate_request": 0,
+   692→    "stage_publish_user_message": 1,
+   693→    "stage_persist_user_turn": 2,
+   694→    "stage_build_context": 0,
+   695→    "stage_retrieve_memory": 5,
+   696→    "stage_plan_execution": 0,
+   697→    "stage_select_agent": 1,
+   698→    "stage_check_permissions": 0,
+   699→    "stage_execute_agent": 42,
+   700→    "stage_publish_agent_result": 1,
+   701→    "stage_update_memory": 2,
+   702→}
+   703→```
+   704→
+   705→Esto permite identificar cuellos de botella por etapa.
+   706→
+   707→### 9.4 Task System
+   708→
+   709→#### Modelo de Tarea
+   710→
+   711→```python
+   712→@dataclass
+   713→class Task:
+   714→    id: str               # UUID4
+   715→    name: str
+   716→    description: str
+   717→    priority: TaskPriority  # LOW | NORMAL | HIGH | CRITICAL
+   718→    state: TaskState        # PENDING | READY | RUNNING | WAITING | COMPLETED | FAILED | CANCELLED
+   719→    progress: int           # 0..100
+   720→    agent_name: str
+   721→    tools_used: list[str]
+   722→    created_at: datetime
+   723→    started_at: datetime | None
+   724→    completed_at: datetime | None
+   725→    result: Any
+   726→    errors: list[str]
+   727→    metadata: dict
+   728→    parent_id: str | None   # para subtareas
+   729→    workflow_id: str | None # para workflows
+   730→```
+   731→
+   732→#### Máquina de Estados
+   733→
+   734→```
+   735→PENDING → READY → RUNNING ─┬─→ COMPLETED
+   736→              ↑             ├─→ FAILED
+   737→              │             ├─→ CANCELLED
+   738→              └─ WAITING ───┘
+   739→                          (paused / blocked)
+   740→
+   741→FAILED → READY (retry)
+   742→COMPLETED, CANCELLED: terminal
+   743→```
+   744→
+   745→Las transiciones son validadas: no se puede pausar una tarea
+   746→`COMPLETED`, ni reanudar una que no esté en `WAITING`.
+   747→
+   748→#### TaskManager
+   749→
+   750→| Método | Descripción |
+   751→|---|---|
+   752→| `create(name, ...)` | Crea una tarea en `PENDING` |
+   753→| `start(task_id)` | Transiciona a `RUNNING` |
+   754→| `complete(task_id, result)` | Marca `COMPLETED` |
+   755→| `fail(task_id, error)` | Marca `FAILED` |
+   756→| `cancel(task_id, reason)` | Marca `CANCELLED` |
+   757→| `pause(task_id)` | Pasa a `WAITING` |
+   758→| `resume(task_id)` | Pasa de `WAITING` a `READY` |
+   759→| `retry(task_id)` | Pasa de `FAILED` a `READY` |
+   760→| `update_progress(task_id, pct)` | Actualiza progreso (0..100) |
+   761→| `next_ready()` | Devuelve la tarea `READY` de mayor prioridad |
+   762→| `summary()` | Stats agregadas para observabilidad |
+   763→
+   764→Cada método emite su evento correspondiente (`task.created`,
+   765→`task.started`, etc.).
+   766→
+   767→### 9.5 Workflow Engine
+   768→
+   769→#### DAG (Grafo Dirigido Acíclico)
+   770→
+   771→Un `Workflow` es un conjunto de nodos (`WorkflowNode`) donde cada
+   772→nodo referencia una `Task` y declara sus dependencias. El motor
+   773→valida el DAG al construirlo (Kahn's algorithm para detectar ciclos).
+   774→
+   775→```
+   776→Sequential:           Parallel / Fan-out:
+   777→  A → B → C             A
+   778→                          ↘
+   779→                           B   →  D
+   780→                          ↗
+   781→                          C
+   782→```
+   783→
+   784→#### WorkflowBuilder
+   785→
+   786→API fluida para construir workflows:
+   787→
+   788→```python
+   789→wf = await (
+   790→    WorkflowBuilder("ingest")
+   791→    .with_task_manager(tm, workflow_id="wf-1")
+   792→    .add_task("fetch", agent_name="fetcher")
+   793→    .add_task("parse", depends_on=["fetch"], agent_name="parser")
+   794→    .add_task("store", depends_on=["parse"], agent_name="storer")
+   795→    .build_async()
+   796→)
+   797→```
+   798→
+   799→#### WorkflowManager
+   800→
+   801→| Método | Descripción |
+   802→|---|---|
+   803→| `register(wf)` | Registra un workflow (emite `workflow.created`) |
+   804→| `run(wf, executor)` | Ejecuta el DAG hasta terminar |
+   805→| `cancel(name, reason)` | Solicita cancelación (no bloqueante) |
+   806→
+   807→El `executor` es una corrutina `(task) -> result` provista por el
+   808→caller. Esto mantiene el motor agnóstico al backend de ejecución.
+   809→
+   810→#### Reintentos
+   811→
+   812→Cada `WorkflowNode` declara `retries=N`. Si la tarea falla, se
+   813→reintenta hasta N veces antes de declarar el nodo como `FAILED`.
+   814→
+   815→#### Criticidad
+   816→
+   817→Un nodo `critical=True` (default) aborta el workflow si falla. Un
+   818→nodo `critical=False` se marca como `CANCELLED` pero el workflow
+   819→continúa con los nodos que no dependan de él.
+   820→
+   821→### 9.6 Planner
+   822→
+   823→#### Estrategias Heurísticas
+   824→
+   825→| Estrategia | Trigger | Subtareas |
+   826→|---|---|---|
+   827→| `single` | (default) | 1: `handle` |
+   828→| `file_operation` | "lee/escribe/lista archivo" | 3: `read → process → respond` |
+   829→| `terminal_command` | "ejecuta/corre comando", "terminal/bash" | 3: `validate → execute → respond` |
+   830→| `research_then_summarize` | "investiga ... y resume" | 3: `gather → analyze → summarize` |
+   831→| `system_info` | "información del sistema" | 2: `query → respond` |
+   832→
+   833→#### Plan
+   834→
+   835→```python
+   836→@dataclass
+   837→class Plan:
+   838→    strategy: str           # etiqueta
+   839→    rationale: str          # explicación
+   840→    subtasks: list[SubTask] # nodos del plan
+   841→```
+   842→
+   843→#### SubTask
+   844→
+   845→```python
+   846→@dataclass
+   847→class SubTask:
+   848→    name: str
+   849→    description: str
+   850→    suggested_agent: str
+   851→    suggested_tools: list[str]
+   852→    depends_on: list[str]   # nombres de subtareas hermanas
+   853→```
+   854→
+   855→#### Integración con Memoria, AgentRegistry y ToolRegistry
+   856→
+   857→El Planner acepta opcionalmente:
+   858→- `memory`: MemoryManager para recuperar contexto histórico.
+   859→- `agent_registry`: para conocer capacidades de agentes.
+   860→- `tool_registry`: para filtrar herramientas sugeridas.
+   861→
+   862→#### Planificación Basada en LLM (Futuro)
+   863→
+   864→La interfaz `Planner.plan(message, context) -> list[dict]` está
+   865→diseñada para que un planner basado en LLM (Sprint 2+) pueda
+   866→reemplazar el heurístico sin cambiar callers.
+   867→
+   868→### 9.7 Observabilidad
+   869→
+   870→#### MetricsCollector
+   871→
+   872→Subscrito al EventBus, mantiene:
+   873→
+   874→**Contadores:**
+   875→- `tasks_created`, `tasks_started`, `tasks_completed`, `tasks_failed`, `tasks_cancelled`, `tasks_paused`, `tasks_resumed`
+   876→- `task_retries`, `task_errors_by_type.{type}`
+   877→- `workflows_created`, `workflows_started`, `workflows_completed`, `workflows_failed`, `workflows_cancelled`
+   878→- `agent_invocations`, `agent_completions`, `agent_failures`
+   879→- `agent_invocations.{name}`, `agent_errors_by_type.{type}`
+   880→- `tool_requests`, `tool_executions`, `tool_failures`, `tool_denials`
+   881→- `tool_requests.{name}`, `tool_executions.{name}`, `tool_failures.{name}`, `tool_denials.{name}`
+   882→- `tool_errors_by_type.{type}`
+   883→
+   884→**Histogramas:**
+   885→- `agent_duration_ms.total`, `agent_duration_ms.{agent_name}`
+   886→- `tool_duration_ms.total`, `tool_duration_ms.{name}`
+   887→
+   888→**Audit Trail:**
+   889→- Buffer circular de los últimos 500 eventos con timestamp y payload.
+   890→
+   891→#### Snapshot
+   892→
+   893→```python
+   894→metrics.snapshot()
+   895→# {
+   896→#   "counters": {"tasks_created": 5, ...},
+   897→#   "histograms": {"agent_duration_ms.echo": {"count": 5, "avg": 12.4, ...}},
+   898→#   "audit_count": 23,
+   899→#   "audit_last_20": [...],
+   900→# }
+   901→```
+   902→
+   903→#### StructuredLogger
+   904→
+   905→Logger que emite una línea JSON por registro:
+   906→
+   907→```json
+   908→{"ts": 1720900000.123, "level": "INFO", "logger": "orchestrator",
+   909→ "msg": "message received", "task_id": "t1", "session_id": "s1",
+   910→ "correlation_id": "cid-1"}
+   911→```
+   912→
+   913→Soporta `correlation_id` para trazabilidad distribuida y métodos
+   914→`with_correlation_id(cid)` para crear loggers derivados.
+   915→
+   916→#### AuditRecorder
+   917→
+   918→Buffer en memoria para tests y debugging. Expone `by_type(event_type)`
+   919→para filtrar entradas por tipo de evento.
+   920→
+   921→### 9.8 Catálogo de Eventos Extendido
+   922→
+   923→Sprint 1.7 añade los siguientes eventos al catálogo:
+   924→
+   925→| Evento | Emitido por | Cuándo |
+   926→|---|---|---|
+   927→| `task.created` | TaskManager | Nueva tarea |
+   928→| `task.started` | TaskManager | Tarea pasa a RUNNING |
+   929→| `task.completed` | TaskManager | Tarea COMPLETED |
+   930→| `task.failed` | TaskManager / Pipeline | Tarea FAILED |
+   931→| `task.cancelled` | TaskManager | Tarea CANCELLED |
+   932→| `task.paused` | TaskManager | Tarea pasa a WAITING |
+   933→| `task.resumed` | TaskManager | Tarea vuelve a READY |
+   934→| `workflow.created` | WorkflowManager | Workflow registrado |
+   935→| `workflow.started` | WorkflowManager | Workflow comienza ejecución |
+   936→| `workflow.completed` | WorkflowManager | Workflow terminó OK |
+   937→| `workflow.failed` | WorkflowManager | Workflow falló |
+   938→| `workflow.cancelled` | WorkflowManager | Workflow cancelado |
+   939→| `planner.plan.created` | Planner | Plan generado |
+   940→| `planner.decision` | Planner | Una decisión por subtarea |
+   941→| `metric.recorded` | MetricsCollector | Métrica registrada (futuro) |
+   942→
+   943→### 9.9 Ejemplo Completo: Workflow con Planner
+   944→
+   945→```python
+   946→import asyncio
+   947→from src import (
+   948→    EventBus, Orchestrator, TaskManager, WorkflowBuilder,
+   949→    WorkflowManager, Planner, MetricsCollector,
+   950→)
+   951→
+   952→async def main():
+   953→    bus = EventBus()
+   954→    metrics = MetricsCollector(bus)
+   955→    await metrics.start()
+   956→
+   957→    orch = Orchestrator(event_bus=bus)
+   958→    orch.attach_planner(Planner(event_bus=bus))
+   959→    await orch.initialize()
+   960→
+   961→    # El usuario pide algo que dispara el Planner.
+   962→    plan = await orch.planner.plan_detailed(
+   963→        "Lee el archivo /etc/hosts",
+   964→        context={"session_id": "s1"},
+   965→    )
+   966→
+   967→    # Construir un workflow desde el plan.
+   968→    tm = TaskManager(event_bus=bus)
+   969→    builder = WorkflowBuilder("file_read").with_task_manager(tm)
+   970→    for st in plan.subtasks:
+   971→        builder.add_task(
+   972→            st.name,
+   973→            agent_name=st.suggested_agent or "echo",
+   974→            depends_on=st.depends_on,
+   975→        )
+   976→    wf = await builder.build_async()
+   977→
+   978→    # Ejecutar el workflow.
+   979→    wfm = WorkflowManager(tm, event_bus=bus)
+   980→
+   981→    async def executor(task):
+   982→        # Aquí se invocaría al Orchestrator para cada subtarea.
+   983→        return f"result-{task.name}"
+   984→
+   985→    final = await wfm.run(wf, executor)
+   986→    print(f"Workflow final state: {final.state.value}")
+   987→
+   988→    # Métricas.
+   989→    snap = metrics.snapshot()
+   990→    print(f"Total tasks created: {snap['counters']['tasks_created']}")
+   991→
+   992→asyncio.run(main())
+   993→```
+   994→
+   995→### 9.10 Decisiones de Diseño (Sprint 1.7)
+   996→
+   997→| Decisión | Justificación |
+   998→|---|---|
+   999→| Pipeline único centralizado | Elimina rutas duplicadas, centraliza errores |
+  1000→| Etapas como corrutinas separadas | Facilita tests, reutilización y reemplazo |
+  1001→| `PipelineError` con `stage` y `error_type` | Trazabilidad granular de fallos |
+  1002→| Task como unidad direccionable | Permite pausa/reanudación/cancelación |
+  1003→| TaskManager storage-only | Separación clara entre estado y ejecución |
+  1004→| Workflow como DAG validado | Previene ciclos, permite paralelismo |
+  1005→| `executor` inyectado en WorkflowManager.run | Motor agnóstico al backend |
+  1006→| Planner heurístico primero | Funciona sin LLM; interfaz LLM-ready |
+  1007→| Métricas en proceso (no Prometheus) | Sin dependencias externas; exporter futuro |
+  1008→| Audit buffer circular | Buffer en memoria acotado (500 entradas) |
+  1009→| StructuredLogger con correlation_id | Trazabilidad distribuida lista para usar |
+  1010→
+  1011→### 9.11 Riesgos y Limitaciones Actuales
+  1012→
+  1013→| Riesgo | Mitigación |
+  1014→|---|---|
+  1015→| TaskManager crece sin límite | LRU en `_history` (MAX_HISTORY=200) |
+  1016→| WorkflowManager no persiste DAGs | Pendiente: persistencia en Sprint 1.8+ |
+  1017→| Planner heurístico es limitado | LLM planner en Sprint 2 |
+  1018→| Métricas en RAM se pierden al reiniciar | Pendiente: exporter Prometheus en futuro |
+  1019→| `_active_tasks` por nombre en ToolExecutor | Pendiente: keyed por execution_id |
+  1020→
+  1021→### 9.12 Próximos Pasos (Sprint 1.8)
+  1022→
+  1023→- Integrar el Planner en el pipeline por defecto (cuando un LLM
+  1024→  esté disponible).
+  1025→- Persistir workflows en SQLite para recuperación tras restart.
+  1026→- Exportador Prometheus para métricas.
+  1027→- Scheduler basado en prioridades para TaskManager.
+  1028→- Integración completa del sistema de permisos en el pipeline.
+  1029→
+  1030→## 10. Sprint 1.8 — Persistencia, Scheduler y Resiliencia
+  1031→
+  1032→Sprint 1.8 completa la integración de todos los subsistemas construidos
+  1033→en sprints anteriores, añadiendo persistencia durable, planificación
+  1034→temporal, recuperación ante fallos y observabilidad avanzada. El
+  1035→resultado es un sistema resiliente que sobrevive reinicios, programa
+  1036→tareas futuras y ofrece visibilidad completa de su estado.
+  1037→
+  1038→### 10.1 Repositorios de Persistencia
+  1039→
+  1040→Los repositorios permiten almacenar y recuperar Tasks, Workflows y
+  1041→Execution History en SQLite, eliminando la pérdida de estado ante
+  1042→reinicios del proceso.
+  1043→
+  1044→```
+  1045→packages/memory/src/memory/repositories/
+  1046→├── __init__.py                  → API pública de repositorios
+  1047→├── task_repository.py           → TaskRepository
+  1048→├── workflow_repository.py       → WorkflowRepository
+  1049→└── execution_repository.py      → ExecutionRepository
+  1050→```
+  1051→
+  1052→#### TaskRepository
+  1053→
+  1054→| Método | Descripción |
+  1055→|---|---|
+  1056→| `create(task)` | Inserta una tarea nueva en SQLite |
+  1057→| `get(task_id)` | Recupera una tarea por ID |
+  1058→| `update(task)` | Actualiza estado, progreso, resultado |
+  1059→| `list_by_workflow(workflow_id)` | Tareas pertenecientes a un workflow |
+  1060→| `list_by_state(state)` | Tareas filtradas por estado |
+  1061→| `delete(task_id)` | Elimina una tarea |
+  1062→| `cleanup_old(days)` | Elimina tareas completadas antiguas |
+  1063→
+  1064→#### WorkflowRepository
+  1065→
+  1066→| Método | Descripción |
+  1067→|---|---|
+  1068→| `create(workflow)` | Inserta un workflow con su definición DAG |
+  1069→| `get(workflow_id)` | Recupera un workflow por ID |
+  1070→| `update_state(workflow_id, state)` | Actualiza estado del workflow |
+  1071→| `list_all()` | Lista todos los workflows |
+  1072→| `delete(workflow_id)` | Elimina un workflow |
+  1073→
+  1074→#### ExecutionRepository
+  1075→
+  1076→| Método | Descripción |
+  1077→|---|---|
+  1078→| `record(execution)` | Registra una ejecución completada |
+  1079→| `get_by_task(task_id)` | Historial de ejecuciones de una tarea |
+  1080→| `get_by_workflow(workflow_id)` | Historial de ejecuciones de un workflow |
+  1081→| `get_recent(limit)` | Últimas N ejecuciones |
+  1082→| `summary()` | Estadísticas agregadas |
+  1083→
+  1084→#### Migración SQL
+  1085→
+  1086→La migración `sprint_1_8_tasks_workflows.sql` crea las tablas
+  1087→`tasks`, `workflows`, `workflow_nodes`, `task_executions` y
+  1088→`execution_history` con índices apropiados.
+  1089→
+  1090→### 10.2 Motor de Scheduler
+  1091→
+  1092→El Scheduler permite programar tareas para ejecución futura,
+  1093→periódica o con reintentos automáticos.
+  1094→
+  1095→```
+  1096→packages/core/src/scheduler.py
+  1097→```
+  1098→
+  1099→#### SchedulerJob
+  1100→
+  1101→```python
+  1102→@dataclass
+  1103→class SchedulerJob:
+  1104→    id: str                       # UUID4
+  1105→    name: str                     # Nombre descriptivo
+  1106→    task_id: str | None           # Tarea asociada (opcional)
+  1107→    action: Callable              # Corrutina a ejecutar
+  1108→    schedule_type: ScheduleType   # ONCE | PERIODIC | RETRY
+  1109→    interval_seconds: float       # Intervalo para PERIODIC
+  1110→    max_retries: int              # Reintentos para RETRY
+  1111→    retry_delay: float            # Demora entre reintentos
+  1112→    scheduled_at: datetime        # Momento de ejecución (ONCE)
+  1113→    created_at: datetime
+  1114→    state: SchedulerJobState      # PENDING | SCHEDULED | RUNNING | COMPLETED | FAILED | CANCELLED
+  1115→```
+  1116→
+  1117→#### Scheduler
+  1118→
+  1119→| Método | Descripción |
+  1120→|---|---|
+  1121→| `schedule(job)` | Programa una nueva tarea |
+  1122→| `schedule_once(name, action, at)` | Ejecución única en momento futuro |
+  1123→| `schedule_periodic(name, action, interval)` | Ejecución periódica |
+  1124→| `schedule_retry(name, action, max_retries, delay)` | Reintentos con demora |
+  1125→| `cancel(job_id)` | Cancela un job programado |
+  1126→| `get_jobs()` | Lista todos los jobs |
+  1127→| `start()` | Inicia el loop del scheduler |
+  1128→| `stop()` | Detiene el scheduler |
+  1129→
+  1130→#### SchedulerRepository
+  1131→
+  1132→Persiste los jobs del scheduler en SQLite para sobrevivir reinicios.
+  1133→Al arrancar, el Scheduler restaura jobs `PENDING` y `SCHEDULED`
+  1134→desde el repositorio.
+  1135→
+  1136→```
+  1137→Scheduler.schedule()
+  1138→  │
+  1139→  ├─ SchedulerRepository.persist(job)
+  1140→  ├─ asyncio.create_task(_run_job(job))
+  1141→  │     │
+  1142→  │     ├─ job.state = RUNNING
+  1143→  │     ├─ await job.action()
+  1144→  │     ├─ job.state = COMPLETED
+  1145→  │     └─ (o) job.state = FAILED → retry logic
+  1146→  │
+  1147→  └─ emit: scheduler.job.{scheduled,completed,failed}
+  1148→```
+  1149→
+  1150→### 10.3 Sistema de Recuperación
+  1151→
+  1152→El sistema de recuperación permite al Orchestrator y sus componentes
+  1153→sobrevivir a reinicios, reanudando tareas y workflows desde su último
+  1154→checkpoint.
+  1155→
+  1156→```
+  1157→packages/core/src/recovery.py
+  1158→```
+  1159→
+  1160→#### RecoveryManager
+  1161→
+  1162→| Método | Descripción |
+  1163→|---|---|
+  1164→| `create_checkpoint(entity_type, entity_id, data)` | Guarda un checkpoint |
+  1165→| `get_latest(entity_type, entity_id)` | Recupera el último checkpoint |
+  1166→| `list_checkpoints(entity_type, entity_id)` | Historial de checkpoints |
+  1167→| `delete_checkpoints(entity_type, entity_id)` | Limpia checkpoints |
+  1168→| `recover_all()` | Reanuda todas las entidades con checkpoints activos |
+  1169→| `recover_task(task_id)` | Reanuda una tarea específica |
+  1170→| `recover_workflow(workflow_id)` | Reanuda un workflow específico |
+  1171→
+  1172→#### CheckpointManager
+  1173→
+  1174→Gestiona el ciclo de vida de los checkpoints:
+  1175→
+  1176→```python
+  1177→@dataclass
+  1178→class Checkpoint:
+  1179→    id: str
+  1180→    entity_type: str          # "task" | "workflow"
+  1181→    entity_id: str
+  1182→    state: dict               # Estado serializable
+  1183→    created_at: datetime
+  1184→    metadata: dict
+  1185→```
+  1186→
+  1187→- Los checkpoints se almacenan en SQLite vía `ExecutionRepository`.
+  1188→- Se crea un checkpoint automático antes de cada transición de estado
+  1189→  crítica (`RUNNING → WAITING`, `COMPLETED`).
+  1190→- Al recuperar, se restaura el estado y se reanuda la ejecución
+  1191→  desde el punto guardado.
+  1192→
+  1193→#### ResilienceHelper
+  1194→
+  1195→Utilidades transversales para resiliencia:
+  1196→
+  1197→| Función | Descripción |
+  1198→|---|---|
+  1199→| `retry_with_backoff(coro, max_retries, base_delay)` | Reintento exponencial |
+  1200→| `circuit_breaker(fail_threshold, reset_timeout)` | Circuit breaker pattern |
+  1201→| `timeout_wrapper(coro, timeout)` | Timeout con cancelación limpia |
+  1202→
+  1203→#### Flujo de Recuperación
+  1204→
+  1205→```
+  1206→Reinicio del proceso
+  1207→  │
+  1208→  ▼
+  1209→RecoveryManager.recover_all()
+  1210→  │
+  1211→  ├─ Lista checkpoints en DB
+  1212→  ├─ Para cada checkpoint activo:
+  1213→  │     ├─ Restaurar estado
+  1214→  │     ├─ Reanudar tareas RUNNING → READY
+  1215→  │     ├─ Reanudar workflows en progreso
+  1216→  │     └─ Restaurar Scheduler jobs
+  1217→  │
+  1218→  ▼
+  1219→Sistema operativo con estado previo al reinicio
+  1220→```
+  1221→
+  1222→### 10.4 Observabilidad Avanzada
+  1223→
+  1224→Se extiende la observabilidad de Sprint 1.7 con dashboard interno,
+  1225→exportadores y tracking por entidad.
+  1226→
+  1227→#### Dashboard Snapshot
+  1228→
+  1229→```python
+  1230→metrics.dashboard_snapshot()
+  1231→# {
+  1232→#   "system": {
+  1233→#     "uptime_seconds": 3600,
+  1234→#     "total_tasks": 42,
+  1235→#     "active_tasks": 3,
+  1236→#     "total_workflows": 8,
+  1237→#     "scheduler_jobs_pending": 5,
+  1238→#   },
+  1239→#   "counters": { ... },
+  1240→#   "histograms": { ... },
+  1241→#   "recent_errors": [ ... ],
+  1242→#   "scheduler_status": { "running": true, "jobs": [...] },
+  1243→#   "recovery_status": { "checkpoints": 12, "last_recovery": "..." },
+  1244→# }
+  1245→```
+  1246→
+  1247→#### Exportadores
+  1248→
+  1249→| Exportador | Formato | Destino |
+  1250→|---|---|---|
+  1251→| `ConsoleExporter` | Texto tabulado | stdout (desarrollo) |
+  1252→| `JSONExporter` | JSON | Archivo o stdout |
+  1253→| `PrometheusExporter` | Prometheus text format | HTTP endpoint `/metrics` |
+  1254→
+  1255→Todos los exportadores implementan la interfaz `MetricsExporter` con
+  1256→el método `export(snapshot)`.
+  1257→
+  1258→#### Tracking por Entidad
+  1259→
+  1260→Las métricas ahora se pueden filtrar por entidad:
+  1261→
+  1262→```python
+  1263→metrics.get_entity_metrics("task", "t-123")
+  1264→# → Contadores, histogramas y auditoría específicos de esa tarea
+  1265→
+  1266→metrics.get_entity_metrics("workflow", "wf-456")
+  1267→# → Estado del workflow, duración, tareas hijas
+  1268→```
+  1269→
+  1270→### 10.5 Diagrama de Integración Actualizado
+  1271→
+  1272→```
+  1273→┌─────────────────────────────────────────────────────────────────────┐
+  1274→│                          DESKTOP APP (WinUI 3)                      │
+  1275→└──────────────────────────┬──────────────────────────────────────────┘
+  1276→                           │ WebSocket + REST
+  1277→                           ▼
+  1278→┌─────────────────────────────────────────────────────────────────────┐
+  1279→│                         BACKEND (FastAPI)                            │
+  1280→│                                                                      │
+  1281→│  ┌──────────────────────────────────────────────────────────────┐   │
+  1282→│  │                     ORCHESTRATOR (Core)                       │   │
+  1283→│  │                                                              │   │
+  1284→│  │  ┌────────────┐  ┌─────────────┐  ┌──────────────────────┐  │   │
+  1285→│  │  │  Pipeline   │  │  Planner    │  │   ToolExecutor       │  │   │
+  1286→│  │  │  (11 stages)│  │  (heuristic)│  │  (keyed by exec_id)  │  │   │
+  1287→│  │  └──────┬─────┘  └──────┬──────┘  └──────────┬───────────┘  │   │
+  1288→│  │         │               │                     │              │   │
+  1289→│  │  ┌──────┴───────────────┴─────────────────────┴──────────┐  │   │
+  1290→│  │  │                  TASK MANAGER                          │  │   │
+  1291→│  │  │  ┌──────────┐  ┌───────────┐  ┌───────────────────┐  │  │   │
+  1292→│  │  │  │  Tasks    │  │ Workflows │  │  SCHEDULER        │  │  │   │
+  1293→│  │  │  │  (7 st.)  │  │  (DAGs)   │  │  (once/periodic/  │  │  │   │
+  1294→│  │  │  └────┬─────┘  └─────┬─────┘  │   retry)          │  │  │   │
+  1295→│  │  │       │              │        └────────┬──────────┘  │  │   │
+  1296→│  │  └───────┼──────────────┼─────────────────┼─────────────┘  │   │
+  1297→│  └──────────┼──────────────┼─────────────────┼────────────────┘   │
+  1298→│             │              │                 │                      │
+  1299→│  ┌──────────┼──────────────┼─────────────────┼────────────────┐   │
+  1300→│  │          ▼              ▼                 ▼                │   │
+  1301→│  │              PERSISTENCIA (SQLite)                          │   │
+  1302→│  │  ┌──────────────┐ ┌──────────────┐ ┌───────────────────┐  │   │
+  1303→│  │  │ TaskRepo     │ │ WorkflowRepo │ │ ExecutionRepo     │  │   │
+  1304→│  │  │              │ │              │ │ + Checkpoints     │  │   │
+  1305→│  │  └──────────────┘ └──────────────┘ └───────────────────┘  │   │
+  1306→│  └──────────────────────────────────────────────────────────┘   │
+  1307→│                                                                  │
+  1308→│  ┌──────────────────────────────────────────────────────────┐   │
+  1309→│  │                  OBSERVABILIDAD                            │   │
+  1310→│  │  ┌──────────────┐ ┌─────────────┐ ┌───────────────────┐  │   │
+  1311→│  │  │MetricsCollect│ │ Structured  │ │ RecoveryManager    │  │   │
+  1312→│  │  │+ Dashboard   │ │ Logger      │ │ + CheckpointMgr    │  │   │
+  1313→│  │  │+ Exporters   │ │             │ │ + ResilienceHelper │  │   │
+  1314→│  │  └──────────────┘ └─────────────┘ └───────────────────┘  │   │
+  1315→│  └──────────────────────────────────────────────────────────┘   │
+  1316→│                                                                  │
+  1317→│  ┌────────────┐  ┌──────────────┐  ┌──────────────┐             │
+  1318→│  │  Agents    │  │   Memory     │  │   Tools      │             │
+  1319→│  │  Registry  │  │  Manager     │  │  Registry    │             │
+  1320→│  └────────────┘  └──────────────┘  └──────────────┘             │
+  1321→└──────────────────────────────────────────────────────────────────┘
+  1322→```
+  1323→
+  1324→### 10.6 Deuda Técnica
+  1325→
+  1326→La deuda técnica identificada y resuelta en este sprint está
+  1327→documentada en detalle en `docs/technical-debt.md`. Los ítems
+  1328→principales resueltos son:
+  1329→
+  1330→| Ítem | Estado | Detalle |
+  1331→|---|---|---|
+  1332→| `ToolExecutor._active_tasks` keyed por nombre | ✅ Resuelto | Ahora keyed por `execution_id` |
+  1333→| `PermissionMode` inconsistente entre enums y config | ✅ Resuelto | Unificado en `packages/shared/src/enums.py` |
+  1334→| Métricas se pierden al reiniciar | ⚠️ Mitigado | Exportadores disponibles; persistencia parcial |
+  1335→| Tests de aislamiento | ⚠️ Mitigado | 70 nuevos tests de integración |
+  1336→
+  1337→## 11. Motor LLM — Detalle Técnico (Sprint 1.9)
+  1338→
+  1339→### 11.1 Visión General
+  1340→
+  1341→El Sprint 1.9 introduce el paquete `packages/llm/`, el motor de
+  1342→interacción con modelos de lenguaje. Antes de este sprint el sistema
+  1343→no tenía conexión real con ningún LLM; los agentes operaban de forma
+  1344→simulada. A partir de ahora, el Orchestrator puede construir prompts,
+  1345→gestionar la ventana de contexto, seleccionar proveedores y recibir
+  1346→respuestas en streaming.
+  1347→
+  1348→Estructura del paquete:
+  1349→
+  1350→```
+  1351→packages/llm/
+  1352→├── src/llm/
+  1353→│   ├── __init__.py
+  1354→│   ├── manager.py          → ModelManager (registro, activación, caché, warmup, health)
+  1355→│   ├── protocol.py         → LLMProvider (Protocol unificado)
+  1356→│   ├── context/
+  1357→│   │   ├── __init__.py
+  1358→│   │   └── manager.py      → ContextManager (ventana de tokens, trimming, auto-summarization)
+  1359→│   ├── prompt/
+  1360→│   │   ├── __init__.py
+  1361→│   │   └── pipeline.py     → PromptPipeline (construcción unificada de prompts)
+  1362→│   ├── streaming/
+  1363→│   │   ├── __init__.py
+  1364→│   │   └── manager.py      → StreamingManager (streaming con cancelación, timeout, retry)
+  1365→│   └── providers/
+  1366→│       ├── __init__.py
+  1367→│       ├── ollama.py       → OllamaProvider
+  1368→│       ├── openai.py       → OpenAIProvider
+  1369→│       ├── anthropic.py    → AnthropicProvider
+  1370→│       ├── google.py       → GoogleProvider
+  1371→│       └── openrouter.py   → OpenRouterProvider
+  1372→```
+  1373→
+  1374→### 11.2 ModelManager
+  1375→
+  1376→El `ModelManager` es el punto de entrada central del paquete LLM.
+  1377→Responsabilidades principales:
+  1378→
+  1379→| Responsabilidad | Detalle |
+  1380→|---|---|
+  1381→| **Registro** | `register_provider(name, provider_cls, config)` — registra un proveedor disponible. |
+  1382→| **Activación** | `activate(name)` — selecciona el proveedor activo para la sesión. |
+  1383→| **Selección** | `get_active_provider() -> LLMProvider` — retorna el proveedor actual. |
+  1384→| **Caché** | Respuestas cacheadas por hash del prompt para evitar llamadas redundantes. |
+  1385→| **Warmup** | `warmup()` — pre-carga modelos y verifica conectividad al arrancar. |
+  1386→| **Health checking** | `health_check(name?) -> dict` — diagnostica estado de uno o todos los proveedores. |
+  1387→
+  1388→```python
+  1389→manager = ModelManager()
+  1390→manager.register_provider("ollama", OllamaProvider, {"base_url": "http://localhost:11434"})
+  1391→manager.register_provider("openai", OpenAIProvider, {"api_key": "sk-..."})
+  1392→manager.activate("ollama")
+  1393→provider = manager.get_active_provider()
+  1394→```
+  1395→
+  1396→### 11.3 LLMProvider — Protocol Unificado
+  1397→
+  1398→Todos los proveedores implementan el mismo `Protocol`, lo que permite
+  1399→intercambiarlos sin modificar el Orchestrator:
+  1400→
+  1401→```python
+  1402→class LLMProvider(Protocol):
+  1403→    async def chat(self, messages: list[dict], **kwargs) -> str: ...
+  1404→    async def stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]: ...
+  1405→    async def embeddings(self, text: str) -> list[float]: ...
+  1406→    async def tokenize(self, text: str) -> int: ...
+  1407→    async def health(self) -> bool: ...
+  1408→    async def close(self) -> None: ...
+  1409→```
+  1410→
+  1411→| Método | Propósito |
+  1412→|---|---|
+  1413→| `chat()` | Generación completa (non-streaming). |
+  1414→| `stream()` | Generación en tiempo real via async iterator. |
+  1415→| `embeddings()` | Vectores de embedding para búsqueda semántica. |
+  1416→| `tokenize()` | Cuenta de tokens del texto (proxy para contexto). |
+  1417→| `health()` | Verifica que el endpoint responde. |
+  1418→| `close()` | Limpia recursos (conexiones HTTP, sesiones). |
+  1419→
+  1420→### 11.4 Proveedores Implementados
+  1421→
+  1422→| Proveedor | Clase | Endpoint | Notas |
+  1423→|---|---|---|---|
+  1424→| Ollama | `OllamaProvider` | `http://localhost:11434` | Modelos locales, sin API key. |
+  1425→| OpenAI | `OpenAIProvider` | `https://api.openai.com/v1` | GPT-4o, GPT-4o-mini, etc. |
+  1426→| Anthropic | `AnthropicProvider` | `https://api.anthropic.com` | Claude 3.5 Sonnet, Claude 3 Opus. |
+  1427→| Google | `GoogleProvider` | `https://generativelanguage.googleapis.com` | Gemini Pro, Gemini Ultra. |
+  1428→| OpenRouter | `OpenRouterProvider` | `https://openrouter.ai/api/v1` | Agregador multi-modelo con una sola API key. |
+  1429→
+  1430→Todos los proveedores utilizan `httpx` como cliente HTTP asíncrono,
+  1431→con soporte para timeouts configurables y reintentos automáticos.
+  1432→
+  1433→### 11.5 ContextManager — Gestión de Ventana de Contexto
+  1434→
+  1435→El `ContextManager` gestiona la ventana de tokens disponible para cada
+  1436→modelo, asegurando que las conversaciones no excedan los límites:
+  1437→
+  1438→| Capacidad | Detalle |
+  1439→|---|---|
+  1440→| **Ventana de tokens** | Límite configurable por modelo (ej: 8192 para Ollama, 128K para GPT-4o). |
+  1441→| **Estimación heurística** | Cuenta aproximada de tokens = `len(text) / 4` (español). |
+  1442→| **Smart trimming** | Elimina mensajes más antiguos preservando el system prompt y los más recientes. |
+  1443→| **Auto-summarization** | Cuando el historial supera el umbral, resume turnos antiguos en un solo mensaje de contexto. |
+  1444→
+  1445→```python
+  1446→ctx = ContextManager(max_tokens=8192)
+  1447→ctx.add_system("Eres Liz, un asistente IA...")
+  1448→ctx.add_history([{"role": "user", "content": "..."}, ...])
+  1449→trimmed = ctx.build_messages()  # -> lista recortada que cabe en la ventana
+  1450→```
+  1451→
+  1452→### 11.6 PromptPipeline — Construcción Unificada de Prompts
+  1453→
+  1454→El `PromptPipeline` orquesta la construcción del prompt final,
+  1455→combinando múltiples fuentes de información en un orden determinista:
+  1456→
+  1457→```
+  1458→PromptPipeline.build(system_prompt, memory, history, plan, tasks, tools)
+  1459→    │
+  1460→    ├── 1. System Prompt (instrucciones base del agente)
+  1461→    ├── 2. Memory (contexto relevante recuperado)
+  1462→    ├── 3. History (historial de conversación, pasado por ContextManager)
+  1463→    ├── 4. Plan (plan del Planner, si existe)
+  1464→    ├── 5. Tasks (tareas pendientes del TaskManager)
+  1465→    └── 6. Tools (descripciones de herramientas disponibles)
+  1466→        │
+  1467→        ▼
+  1468→    list[dict]  →  mensajes listos para enviar al LLMProvider
+  1469→```
+  1470→
+  1471→Esta construcción se integra como la etapa `stage_build_prompt`
+  1472→dentro del pipeline de ejecución del Orchestrator.
+  1473→
+  1474→### 11.7 StreamingManager — Streaming en Tiempo Real
+  1475→
+  1476→El `StreamingManager` gestiona la transmisión incremental de
+  1477→respuestas del LLM hacia los clientes WebSocket:
+  1478→
+  1479→| Capacidad | Detalle |
+  1480→|---|---|
+  1481→| **Cancelación** | El cliente puede cancelar el stream en cualquier momento. |
+  1482→| **Timeout** | Timeout configurable por proveedor y por solicitud. |
+  1483→| **Retry** | Reintentos automáticos con backoff exponencial ante errores transitorios. |
+  1484→| **Backpressure** | Control de flujo para evitar saturar el buffer del cliente. |
+  1485→| **Multi-cliente** | Múltiples clientes pueden suscribirse al mismo stream. |
+  1486→
+  1487→```python
+  1488→stream_mgr = StreamingManager()
+  1489→async for chunk in stream_mgr.stream_message(provider, messages):
+  1490→    await websocket.send_text(chunk)  # envío incremental al desktop
+  1491→```
+  1492→
+  1493→### 11.8 Puntos de Integración con el Orchestrator
+  1494→
+  1495→El motor LLM se integra con el sistema existente en tres puntos
+  1496→clave:
+  1497→
+  1498→| Punto de integración | Detalle |
+  1499→|---|---|
+  1500→| `Orchestrator.attach_llm(manager)` | Inyecta el `ModelManager` en el Orchestrator. |
+  1501→| `pipeline: stage_build_prompt` | Nueva etapa del pipeline que invoca `PromptPipeline.build()`. |
+  1502→| `stream_message()` | Método del Orchestrator que delega en `StreamingManager`. |
+  1503→
+  1504→### 11.9 Diagrama de Flujo LLM
+  1505→
+  1506→```
+  1507→┌──────────┐     ┌───────┐     ┌──────────────┐     ┌───────────────┐
+  1508→│  Usuario  │────►│  API  │────►│ Orchestrator │────►│ PromptPipeline│
+  1509→└──────────┘     └───────┘     └──────┬───────┘     └───────┬───────┘
+  1510→                                              │                     │
+  1511→                                              │    Combina:         │
+  1512→                                              │    system + memory  │
+  1513→                                              │    + history + plan │
+  1514→                                              │    + tasks + tools  │
+  1515→                                              │                     ▼
+  1516→                                              │            ┌────────────────┐
+  1517→                                              │            │ ContextManager │
+  1518→                                              │            │ (trim + summary)│
+  1519→                                              │            └───────┬────────┘
+  1520→                                              │                    │
+  1521→                                              │                    ▼
+  1522→                                              │          ┌──────────────────┐
+  1523→                                              └─────────►│   LLMProvider    │
+  1524→                                                         │ (Ollama/OpenAI/  │
+  1525→                                                         │  Anthropic/      │
+  1526→                                                         │  Google/         │
+  1527→                                                         │  OpenRouter)     │
+  1528→                                                         └────────┬─────────┘
+  1529→                                                                  │
+  1530→                                                                  ▼
+  1531→                                                         ┌──────────────────┐
+  1532→                                                         │ StreamingManager  │
+  1533→                                                         │ (chunk a chunk)   │
+  1534→                                                         └────────┬─────────┘
+  1535→                                                                  │
+  1536→                                                                  ▼
+  1537→                                                         ┌──────────────────┐
+  1538→                                                         │    Respuesta     │
+  1539→                                                         │  (al usuario)    │
+  1540→                                                         └──────────────────┘
+  1541→```
+  1542→
+  1543→### 11.10 Decisiones de Diseño (Sprint 1.9)
+  1544→
+  1545→| Decisión | Justificación |
+  1546→|---|---|
+  1547→| Protocol en vez de ABC | Permite que cualquier clase cumpla la interfaz sin herencia obligatoria. |
+  1548→| `httpx` como cliente HTTP | Async nativo, soporte HTTP/2, mejor que `aiohttp` para streaming. |
+  1549→| Estimación heurística de tokens | Evita dependencia pesada (tiktoken) en el MVP; se mejorará en Sprint 2.0. |
+  1550→| PromptPipeline separado del ContextManager | Responsabilidad única: uno construye, el otro recorta. |
+  1551→| Caché en ModelManager | Evita llamadas duplicadas al mismo modelo con el mismo prompt. |
+  1552→
+  1553→## 12. Sprint 2.1 — Arquitectura Multi-Agent
+  1554→
+  1555→> Documentación completa: [`docs/sprint-2.1-multi-agent-report.md`](sprint-2.1-multi-agent-report.md)
+  1556→> y [`docs/sprint-2.1-diagrams.md`](sprint-2.1-diagrams.md).
+  1557→
+  1558→Sprint 2.1 introduce una **arquitectura profesional basada en agentes**
+  1559→en `packages/multiagent/`. Es una **capa paralela** al `Orchestrator`
+  1560→de Sprint 1: no reemplaza código existente, añade una nueva capa
+  1561→lista para integrarse mediante adaptadores.
+  1562→
+  1563→### 12.1 Componentes
+  1564→
+  1565→- **`BaseAgent`** (abstracta) — identidad, permisos, memoria, herramientas,
+  1566→  objetivos, lifecycle (`start/stop/pause/resume/execute/health/serialize`).
+  1567→- **`AgentOrchestrator`** — registro, dispatch, broadcast, pause/resume
+  1568→  global, health check, métricas, heartbeat.
+  1569→- **`MessageBus`** — pub/sub async entre agentes con broadcast y pending.
+  1570→- **`PriorityQueue`** — cola de tareas con estados
+  1571→  queued/running/paused/completed/failed/cancelled y retry.
+  1572→- **`AgentMemory`** — memoria corta (deque) + larga (LRU) + embeddings
+  1573→  (cosine similarity, sin dependencias externas).
+  1574→- **`AgentLogger`** — logs estructurados (start/end/error/tool/metric)
+  1575→  con duration_ms, memory_kb, tokens, tools_used.
+  1576→- **`MultiAgentConfig`** — config inmutable (max_agents, timeouts,
+  1577→  retry, heartbeat, capacidades).
+  1578→
+  1579→### 12.2 Agentes concretos
+  1580→
+  1581→| Agente | Responsabilidad |
+  1582→|---|---|
+  1583→| `PlannerAgent` | Divide tareas, estima dificultad, prioriza (heurística por patrones). |
+  1584→| `CoderAgent` | Escribe, refactoriza, corrige y genera tests. |
+  1585→| `ReviewerAgent` | Detecta malas prácticas, seguridad, performance, calidad. |
+  1586→| `ResearchAgent` | Investiga, busca APIs, resume (con fetch HTTP opcional). |
+  1587→| `TerminalAgent` | Ejecuta comandos con allowlist + bloqueo de tokens peligrosos. |
+  1588→| `GitAgent` | Commits, ramas, merges, push, pull (force requiere UNRESTRICTED). |
+  1589→| `MemoryAgent` | Memoria corta/larga, embeddings, recuperación contextual. |
+  1590→
+  1591→### 12.3 Compatibilidad con Sprint 1
+  1592→
+  1593→| Sprint 1 | Sprint 2.1 | Relación |
+  1594→|---|---|---|
+  1595→| `packages/agents/src/base.py::BaseAgent` | `packages/multiagent/src/multiagent/base.py::BaseAgent` | Coexisten (interfaces distintas) |
+  1596→| `packages/core/src/orchestrator.py::Orchestrator` | `packages/multiagent/src/multiagent/orchestrator.py::AgentOrchestrator` | Coexisten |
+  1597→| `packages/core/src/task.py::Task/TaskManager` | `packages/multiagent/src/multiagent/queue.py::Task/PriorityQueue` | Coexisten |
+  1598→| `packages/core/src/event_bus.py::EventBus` | `packages/multiagent/src/multiagent/messages.py::MessageBus` | Coexisten |
+  1599→
+  1600→Los 43+ tests de Sprint 1 verificados siguen pasando sin cambios.
+  1601→
+  1602→
+  1603→## 13. Sprint 2.2 — Collaborative Multi-Agent Execution
+  1604→
+  1605→> Documentación completa: [`docs/sprint-2.2-collaborative-agents-report.md`](sprint-2.2-collaborative-agents-report.md)
+  1606→> y [`docs/sprint-2.2-diagrams.md`](sprint-2.2-diagrams.md).
+  1607→
+  1608→Sprint 2.2 transforma los agentes en un **equipo colaborativo**. El
+  1609→`WorkflowOrchestrator` coordina workflows completos entre varios
+  1610→agentes, con DAG de dependencias, ejecución paralela, failover
+  1611→automático, contexto compartido y observabilidad completa.
+  1612→
+  1613→### 13.1 Componentes nuevos
+  1614→
+  1615→- **`WorkflowEngine`** — motor que ejecuta workflows respetando el DAG,
+  1616→  con paralelismo configurable y failover (retry/reassign/skip/cancel).
+  1617→- **`Workflow` / `Step`** — modelos de datos con todos los campos de
+  1618→  la especificación (id, name, status, retry, timeout, depends_on, etc.).
+  1619→- **`DAG`** — grafo acíclico con `validate()` (ciclos, deps rotas,
+  1620→  huérfanos), `topological_order()`, `ready_steps()`, `ancestors()`,
+  1621→  `descendants()`, `subgraph()`.
+  1622→- **`EventBus`** — bus **pub/sub de eventos del sistema**, separado del
+  1623→  `MessageBus` (punto-a-punto). Historial, métricas, filtros, aislamiento.
+  1624→- **`ContextManager`** — contexto compartido: objetivos, archivos (con
+  1625→  SHA-256), snippets de código, variables, mensajes, memoria. Soporta
+  1626→  `transfer_context` entre agentes.
+  1627→- **`Scheduler`** — decide qué step, qué agente y cuándo. Respeta
+  1628→  `max_parallel_steps` y `max_parallel_agents`.
+  1629→- **`LoadBalancer`** — scoring ponderado (estado, CPU, RAM, cola,
+  1630→  especialidad, historial) con pesos normalizables.
+  1631→- **`MetricsCollector`** — suscrito al EventBus, construye histograms
+  1632→  (p50/p95/p99) de workflow_duration, step_duration, queue_time, y
+  1633→  contadores de parallelism, agent_usage, retry_count, success_rate.
+  1634→- **`WorkflowOrchestrator`** — API unificada que combina
+  1635→  `AgentOrchestrator` (Sprint 2.1) + `WorkflowEngine` (Sprint 2.2).
+  1636→  Métodos de coordinación: `delegate`, `request_help`,
+  1637→  `transfer_context`, `wait_for`, `cancel_workflow`, `resume_workflow`.
+  1638→- **API REST** (FastAPI) — endpoints `/workflows`, `/workflows/{id}`,
+  1639→  `/steps`, `/events`, `/metrics/workflows`, `/metrics/agents`.
+  1640→
+  1641→### 13.2 PlannerAgent extendido
+  1642→
+  1643→Con `payload['op'] = 'plan_workflow'`, el `PlannerAgent` genera un
+  1644→`Workflow` completo con DAG y estimaciones de tokens, duración y
+  1645→parallelismo. Patrones: file_op, terminal, research, system, review.
+  1646→
+  1647→### 13.3 Failover
+  1648→
+  1649→Orden de acciones cuando un step falla:
+  1650→
+  1651→1. **RETRY** si `step.retry < max_retries`.
+  1652→2. **REASSIGN** si `reassign_on_fail` y no se han agotado los reassigns.
+  1653→3. **SKIP** si `criticality == OPTIONAL` y `skip_optional_on_fail`.
+  1654→4. **CANCEL** si `criticality == REQUIRED` y `cancel_on_required_fail`.
+  1655→
+  1656→El SKIP se propaga en cadena a los dependientes.
+  1657→
+  1658→### 13.4 Compatibilidad
+  1659→
+  1660→| Sprint 2.1 | Sprint 2.2 | Relación |
+  1661→|---|---|---|
+  1662→| `AgentOrchestrator` | `WorkflowOrchestrator` (envuelve al anterior) | Compatibles |
+  1663→| `MessageBus` | `EventBus` (separado) | Coexisten |
+  1664→| 7 agentes concretos | `PlannerAgent` extendido | 100% compatible |
+  1665→
+  1666→Los **130 tests de Sprint 2.1** siguen pasando sin cambios.
+  1667→
+  1668→## 14. Sprint 2.2/2 — Refinamiento: Agent Registry + Capabilities
+  1669→
+  1670→> Documentación completa: [`docs/sprint-2.2-2-agent-registry-report.md`](sprint-2.2-2-agent-registry-report.md)
+  1671→> y [`docs/sprint-2.2-2-diagrams.md`](sprint-2.2-2-diagrams.md).
+  1672→
+  1673→Sprint 2.2/2 elimina dependencias rígidas entre Scheduler, Workflow
+  1674→Engine y agentes. Los agentes dejan de identificarse únicamente por
+  1675→nombre y pasan a ser **descubiertos, registrados y seleccionados
+  1676→automáticamente** según sus **capabilities**.
+  1677→
+  1678→### 14.1 Componentes nuevos
+  1679→
+  1680→- **`AgentRegistry`** — registro único de agentes. Métodos
+  1681→  `register/unregister/replace/discover/get/get_all/exists/health/metrics`.
+  1682→  Auto-discovery via hooks. Health con heartbeat, uptime, usage.
+  1683→- **`AgentRecord`** — wrapper con id/name/version/capabilities/priority/
+  1684→  status/metadata/created_at/last_seen/last_heartbeat/health/errors/usage.
+  1685→- **`Capability`** (inmutable, jerárquica con dots, wildcards `*`).
+  1686→- **`CapabilityRegistry`** — catálogo de 34 capabilities estándar en
+  1687→  10 categorías (planning, workflow, code.*, git.*, terminal.execute,
+  1688→  filesystem.*, memory.*, web.search, documentation.lookup, research.*).
+  1689→- **`CapabilityResolver`** — selección inteligente por scoring ponderado
+  1690→  (specialty + priority + cost + history + load + latency).
+  1691→- **`BackwardCompatibilityAdapter`** — traduce nombres legacy
+  1692→  (PlannerAgent, CoderAgent, etc.) y actions (refactor, review, etc.)
+  1693→  a capabilities. Ningún workflow existente se rompe.
+  1694→- **`RegistryAwareScheduler`** — scheduler que usa el resolver en lugar
+  1695→  del LoadBalancer directo. Hereda de `Scheduler` (Sprint 2.2).
+  1696→
+  1697→### 14.2 Eventos nuevos
+  1698→
+  1699→`agent.registered`, `agent.removed`, `agent.health.changed`,
+  1700→`capability.resolved`, `capability.miss`, `scheduler.selected_agent`.
+  1701→
+  1702→### 14.3 Verificación: nada depende de clases concretas
+  1703→
+  1704→El `RegistryAwareScheduler` no recibe agentes por nombre; los obtiene
+  1705→del `AgentRegistry` vía `CapabilityResolver`. El
+  1706→`BackwardCompatibilityAdapter` traduce workflows legacy automáticamente.
+  1707→Ningún componente del workflow engine acopla a una clase concreta de
+  1708→agente.
+  1709→
+  1710→### 14.4 Compatibilidad
+  1711→
+  1712→| Componente anterior | Nuevo componente | Relación |
+  1713→|---|---|---|
+  1714→| `AgentOrchestrator` (Sprint 2.1) | `AgentRegistry` | Coexisten; registry es fuente de verdad |
+  1715→| `Scheduler` (Sprint 2.2) | `RegistryAwareScheduler` | Hereda; se puede usar cualquiera |
+  1716→| `LoadBalancer` (Sprint 2.2) | `CapabilityResolver` | Coexisten; resolver usa scoring más rico |
+  1717→| Workflows con `step.agent="CoderAgent"` | `BackwardCompatibilityAdapter` | Traduce automáticamente |
+  1718→
+  1719→Los **248 tests de Sprint 2.1+2.2** siguen pasando sin cambios.
+  1720→
+  1721→## 15. Sprint 2.3 — Agent Lifecycle & Registry Integration
+  1722→
+  1723→> Documentación completa: [`docs/sprint-2.3-agent-lifecycle-report.md`](sprint-2.3-agent-lifecycle-report.md).
+  1724→
+  1725→Sprint 2.3 convierte el sistema de agentes en una arquitectura profesional
+  1726→con registry robusto, manifest declarativo, ciclo de vida profesional y
+  1727→orchestrator desacoplado por capabilities.
+  1728→
+  1729→### 15.1 Componentes nuevos
+  1730→
+  1731→- **`AgentManifest`** (`registry/manifest.py`) — contrato declarativo inmutable
+  1732→  (id/name/version/description/capabilities/priority/metadata). Validaciones
+  1733→  de formato (ID lowercase, version semver, no caps duplicadas, priority >= 0).
+  1734→  `standard_manifests()` devuelve 7 manifests para los agentes de Sprint 2.1.
+  1735→- **`LifecycleManager`** (`registry/lifecycle.py`) — wrapper no intrusivo sobre
+  1736→  `BaseAgent` con estados CREATED → INITIALIZING → READY ⇄ RUNNING → STOPPED,
+  1737→  ERROR recuperable. Métodos `initialize()`, `start()`, `stop()`, `mark_error()`,
+  1738→  `recover()`, `health_check()`.
+  1739→- **`RegistryOrchestrator`** (`registry/orchestrator.py`) — orchestrator
+  1740→  desacoplado que no conoce clases concretas. `request(capability, task)`
+  1741→  resuelve vía `CapabilityResolver`, ejecuta con lifecycle, y registra usage.
+  1742→  `bootstrap()` registra 7 agentes estándar con manifests.
+  1743→
+  1744→### 15.2 API simplificada del AgentRegistry
+  1745→
+  1746→Métodos nuevos: `register_simple`, `register_with_manifest`, `list_agents`,
+  1747→`list_manifests`, `find_by_capability_simple`, `find_manifests_by_capability`.
+  1748→
+  1749→### 15.3 Compatibilidad
+  1750→
+  1751→- `AgentOrchestrator` (Sprint 2.1) sigue funcionando sin cambios.
+  1752→- `WorkflowOrchestrator` y `WorkflowEngine` (Sprint 2.2) coexisten.
+  1753→- Los 334 tests de Sprint 2.1+2.2 siguen pasando.
+  1754→- 100 tests nuevos añadidos en `tests/agents/`.
+  1755→
