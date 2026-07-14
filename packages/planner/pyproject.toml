@@ -1,0 +1,33 @@
+[project]
+name = "liz-planner"
+version = "0.1.0"
+description = "Intelligent Task Planner & Execution Engine for Liz Coder Plus (Sprint 2.8)"
+requires-python = ">=3.11"
+authors = [{ name = "caos1codex-hash" }]
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

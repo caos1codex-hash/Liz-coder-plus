@@ -2,7 +2,72 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Sprint 2.7 — Semantic Memory & Retrieval Engine
+## [Unreleased] — Sprint 2.8 — Intelligent Task Planner & Execution Engine
+
+### Sprint 2.8 — Intelligent Task Planner & Execution Engine
+
+#### Added
+- **New package `packages/planner/`** — Intelligent Task Planner & Execution
+  Engine. Decomposes high-level user requests into optimized execution plans
+  represented as DAGs of `Task` objects, assigns each task to the best
+  available agent, and provides a full `Scheduler` that executes the plan
+  respecting dependencies, priorities, retries, and recovery policies.
+- **`Task`** (`planner/task.py`): atomic unit of work with all required fields
+  (id, title, description, status, priority, dependencies,
+  required_capabilities, assigned_agent, estimated_duration, estimated_tokens,
+  estimated_cost, metadata, created_at, updated_at). 8 statuses (PENDING,
+  READY, RUNNING, WAITING, COMPLETED, FAILED, CANCELLED, SKIPPED) with
+  validated state transitions. Methods: serialize, deserialize, clone, reset,
+  mark_running, mark_completed, mark_failed, cancel, skip, increment_retry.
+- **`DAG`** (`planner/graph.py`): Directed Acyclic Graph with cycle detection
+  (DFS 3-color), topological sort (Kahn's algorithm), parallel layers,
+  critical path, ancestors/descendants, subgraph, serialization. Cycles are
+  rejected at add_dependency time.
+- **`ExecutionPlan`** (`planner/execution_plan.py`): container for tasks + DAG
+  + cached views (parallel_groups, execution_order, statistics). Methods:
+  add_task, remove_task, add_dependency, validate, assert_valid, summary,
+  serialize, deserialize, clone.
+- **`Scheduler`** (`planner/scheduler.py`): stateful scheduler with priority
+  scheduling, parallel execution, dependency resolution, auto-retry on
+  failure, pause/resume/cancel/skip, crash recovery (to_state/from_state),
+  on_replan callback, history & metrics.
+- **`TaskPlanner`** (`planner/planner.py`): top-level orchestrator with
+  create_plan, update_plan, replan, split_task, merge_tasks, estimate,
+  validate, assign_agents. The `software_project` template produces the exact
+  8-stage decomposition required by the spec (Requirements → Architecture →
+  Backend → Frontend → AI Integration → Testing → Packaging → Documentation).
+- **`TaskDecomposer`** (`planner/task_decomposer.py`): decomposes objectives
+  using 5 built-in templates (software_project, research, refactor, bugfix,
+  documentation) + 17 keyword mappings + fallback single-task.
+- **`DependencyAnalyzer`** (`planner/dependency_analyzer.py`): infers
+  dependencies via 4 strategies (explicit hints, capability ordering, phase
+  tags, sequential fallback).
+- **`CapabilityMatcher`** (`planner/capability_matcher.py`): multi-signal
+  agent scoring (specialty 0.40, availability 0.20, workload 0.15, priority
+  0.10, affinity 0.15). Integrates with AgentRegistry via adapter.
+- **`CostEstimator`** (`planner/estimator.py`): heuristic estimator producing
+  duration, tokens, cost, difficulty. Fully configurable via EstimatorConfig
+  (base values, per-token rates, difficulty keywords, capability multipliers).
+- **`MultiAgentRegistryAdapter`** (`planner/integration.py`): wraps the
+  existing `AgentRegistry` (Sprint 2.2-2) so the planner's matcher can use it.
+- **`SemanticMemoryAdapter`** (`planner/integration.py`): wraps the existing
+  `SemanticRetrievalEngine` (Sprint 2.7) for similar-plan retrieval.
+- **`WorkflowEngineAdapter`** (`planner/integration.py`): converts an
+  ExecutionPlan into a Workflow consumable by the existing workflow engine.
+- **`build_integrated_planner()`** (`planner/integration.py`): convenience
+  factory that wires the planner to existing modules.
+- **Tests**: 431 unit + integration tests for the planner package (95%
+  coverage). Tests cover all modules including end-to-end integration with
+  the real AgentRegistry and WorkflowEngine.
+
+#### Compatibility
+- **No breaking changes** to existing modules (Sprint 2.1-2.7).
+- The planner is a **new** package; existing packages are untouched.
+- All 305 existing multi-agent/registry/workflow tests still pass.
+- The planner has **zero hard dependencies** on the multiagent / memory /
+  workflow packages at import time (integrations are lazy).
+
+## [0.7.0] — Sprint 2.7 — Semantic Memory & Retrieval Engine
 
 ### Sprint 2.7 — Semantic Memory & Retrieval Engine
 
