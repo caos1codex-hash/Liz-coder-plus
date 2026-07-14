@@ -1,0 +1,741 @@
+     1→"""WorkflowEngine — motor de ejecución de workflows (Sprint 2.2).
+     2→
+     3→Responsabilidades:
+     4→
+     5→- Ejecuta un `Workflow` respetando el DAG de dependencias.
+     6→- Asigna steps a agentes vía `Scheduler` + `LoadBalancer`.
+     7→- Ejecuta steps en paralelo (hasta `max_parallel_steps`).
+     8→- Maneja **failover**: retry, reasignación, skip (opcional), cancel.
+     9→- Emite eventos al `EventBus` en cada transición.
+    10→- Integra el `ContextManager` para compartir contexto entre steps.
+    11→- Integra el `AgentLogger` de Sprint 2.1 para telemetría.
+    12→- Calcula métricas (duration, parallelism, queue_time, retry_count, success_rate).
+    13→
+    14→El engine es asyncio-safe y puede ejecutar varios workflows concurrentes.
+    15→"""
+    16→
+    17→from __future__ import annotations
+    18→
+    19→import asyncio
+    20→import logging
+    21→import time
+    22→from dataclasses import dataclass
+    23→from typing import Any
+    24→
+    25→from ..base import BaseAgent
+    26→from ..config import MultiAgentConfig
+    27→from ..enums import AgentStatus
+    28→from ..logs import AgentLogger
+    29→from .context import ContextManager
+    30→from .enums import (
+    31→    FailoverAction,
+    32→    StepCriticality,
+    33→    StepStatus,
+    34→    WorkflowEvent,
+    35→    WorkflowStatus,
+    36→)
+    37→from .event_bus import EventBus
+    38→from .load_balancer import LoadBalancer
+    39→from .models import Step, Workflow
+    40→from .scheduler import Scheduler, SchedulerConfig
+    41→
+    42→logger = logging.getLogger(__name__)
+    43→
+    44→
+    45→# ----------------------------------------------------------------------
+    46→# Failover policy
+    47→# ----------------------------------------------------------------------
+    48→
+    49→
+    50→@dataclass
+    51→class FailoverPolicy:
+    52→    """Política de failover para el engine.
+    53→
+    54→    Attributes:
+    55→        max_retries:           Reintentos por step antes de reasignar.
+    56→        reassign_on_fail:      Si True, intenta reasignar a otro agente.
+    57→        max_reassigns:         Máximo de reasignaciones por step.
+    58→        skip_optional_on_fail: Si True, los steps OPTIONAL fallidos se SKIP.
+    59→        cancel_on_required_fail: Si True, un step REQUIRED fallido cancela el workflow.
+    60→    """
+    61→
+    62→    max_retries: int = 2
+    63→    reassign_on_fail: bool = True
+    64→    max_reassigns: int = 2
+    65→    skip_optional_on_fail: bool = True
+    66→    cancel_on_required_fail: bool = True
+    67→
+    68→
+    69→# ----------------------------------------------------------------------
+    70→# Resultado de ejecución
+    71→# ----------------------------------------------------------------------
+    72→
+    73→
+    74→@dataclass
+    75→class WorkflowExecutionResult:
+    76→    """Resultado de ejecutar un workflow.
+    77→
+    78→    Attributes:
+    79→        workflow_id:    ID del workflow.
+    80→        status:         WorkflowStatus final.
+    81→        steps_total:    Total de steps.
+    82→        steps_completed: Steps completados.
+    83→        steps_failed:   Steps fallidos.
+    84→        steps_skipped:  Steps saltados.
+    85→        duration_ms:    Duración total.
+    86→        parallelism_max: Máximo nº de steps en paralelo alcanzado.
+    87→        retry_count:    Reintentos totales.
+    88→        reassign_count: Reasignaciones totales.
+    89→        result:         Resultado final del workflow.
+    90→        error:          Error fatal si hubo.
+    91→    """
+    92→
+    93→    workflow_id: str = ""
+    94→    status: WorkflowStatus = WorkflowStatus.PENDING
+    95→    steps_total: int = 0
+    96→    steps_completed: int = 0
+    97→    steps_failed: int = 0
+    98→    steps_skipped: int = 0
+    99→    duration_ms: float = 0.0
+   100→    parallelism_max: int = 0
+   101→    retry_count: int = 0
+   102→    reassign_count: int = 0
+   103→    result: Any = None
+   104→    error: str | None = None
+   105→
+   106→    def to_dict(self) -> dict[str, Any]:
+   107→        return {
+   108→            "workflow_id": self.workflow_id,
+   109→            "status": self.status.value,
+   110→            "steps_total": self.steps_total,
+   111→            "steps_completed": self.steps_completed,
+   112→            "steps_failed": self.steps_failed,
+   113→            "steps_skipped": self.steps_skipped,
+   114→            "duration_ms": round(self.duration_ms, 2),
+   115→            "parallelism_max": self.parallelism_max,
+   116→            "retry_count": self.retry_count,
+   117→            "reassign_count": self.reassign_count,
+   118→            "result": self.result,
+   119→            "error": self.error,
+   120→        }
+   121→
+   122→
+   123→# ----------------------------------------------------------------------
+   124→# Engine
+   125→# ----------------------------------------------------------------------
+   126→
+   127→
+   128→class WorkflowEngine:
+   129→    """Motor de ejecución de workflows.
+   130→
+   131→    Args:
+   132→        agents:        Lista de agentes disponibles (se actualizará dinámicamente).
+   133→        config:        Configuración multi-agent.
+   134→        event_bus:     EventBus para telemetría.
+   135→        scheduler:     Scheduler (si None, se crea uno).
+   136→        load_balancer: LoadBalancer (si None, se crea uno).
+   137→        failover:      Política de failover.
+   138→        logger:        AgentLogger de Sprint 2.1.
+   139→    """
+   140→
+   141→    def __init__(
+   142→        self,
+   143→        *,
+   144→        agents: list[BaseAgent] | None = None,
+   145→        config: MultiAgentConfig | None = None,
+   146→        event_bus: EventBus | None = None,
+   147→        scheduler: Scheduler | None = None,
+   148→        load_balancer: LoadBalancer | None = None,
+   149→        failover: FailoverPolicy | None = None,
+   150→        agent_logger: AgentLogger | None = None,
+   151→        scheduler_config: SchedulerConfig | None = None,
+   152→    ) -> None:
+   153→        self._config = config or MultiAgentConfig()
+   154→        self._bus = event_bus or EventBus()
+   155→        self._lb = load_balancer or LoadBalancer()
+   156→        self._scheduler = scheduler or Scheduler(
+   157→            load_balancer=self._lb,
+   158→            event_bus=self._bus,
+   159→            config=scheduler_config or SchedulerConfig(),
+   160→        )
+   161→        self._failover = failover or FailoverPolicy()
+   162→        self._logger = agent_logger or AgentLogger(
+   163→            history_size=self._config.log_history_size,
+   164→        )
+   165→        self._agents: dict[str, BaseAgent] = {}
+   166→        if agents:
+   167→            for a in agents:
+   168→                self._agents[a.name] = a
+   169→
+   170→        # Contextos por workflow.
+   171→        self._contexts: dict[str, ContextManager] = {}
+   172→        # Workflows en ejecución.
+   173→        self._running: dict[str, Workflow] = {}
+   174→
+   175→    # ------------------------------------------------------------------
+   176→    # Propiedades
+   177→    # ------------------------------------------------------------------
+   178→
+   179→    @property
+   180→    def event_bus(self) -> EventBus:
+   181→        return self._bus
+   182→
+   183→    @property
+   184→    def scheduler(self) -> Scheduler:
+   185→        return self._scheduler
+   186→
+   187→    @property
+   188→    def load_balancer(self) -> LoadBalancer:
+   189→        return self._lb
+   190→
+   191→    @property
+   192→    def logger(self) -> AgentLogger:
+   193→        return self._logger
+   194→
+   195→    @property
+   196→    def failover(self) -> FailoverPolicy:
+   197→        return self._failover
+   198→
+   199→    def register_agent(self, agent: BaseAgent) -> None:
+   200→        """Añade o reemplaza un agente disponible."""
+   201→        self._agents[agent.name] = agent
+   202→
+   203→    def unregister_agent(self, name: str) -> bool:
+   204→        return self._agents.pop(name, None) is not None
+   205→
+   206→    def list_agents(self) -> list[str]:
+   207→        return list(self._agents.keys())
+   208→
+   209→    def get_context(self, workflow_id: str) -> ContextManager | None:
+   210→        return self._contexts.get(workflow_id)
+   211→
+   212→    # ------------------------------------------------------------------
+   213→    # API principal
+   214→    # ------------------------------------------------------------------
+   215→
+   216→    async def submit(self, workflow: Workflow) -> Workflow:
+   217→        """Registra un workflow para ejecución. Emite WORKFLOW_CREATED."""
+   218→        # Validar DAG.
+   219→        validation = workflow.validate()
+   220→        if not validation.ok:
+   221→            raise ValueError(
+   222→                f"Workflow '{workflow.name}' has invalid DAG: {validation.to_dict()}"
+   223→            )
+   224→
+   225→        self._running[workflow.id] = workflow
+   226→        self._contexts[workflow.id] = ContextManager(
+   227→            workflow.id, event_bus=self._bus
+   228→        )
+   229→        await self._emit(
+   230→            WorkflowEvent.WORKFLOW_CREATED,
+   231→            source="engine",
+   232→            payload={
+   233→                "workflow_id": workflow.id,
+   234→                "name": workflow.name,
+   235→                "step_count": workflow.step_count,
+   236→                "priority": workflow.priority.value,
+   237→            },
+   238→            correlation_id=workflow.id,
+   239→        )
+   240→        return workflow
+   241→
+   242→    async def run(
+   243→        self,
+   244→        workflow: Workflow,
+   245→        *,
+   246→        max_iterations: int = 1000,
+   247→    ) -> WorkflowExecutionResult:
+   248→        """Ejecuta un workflow completo hasta terminar (o fallar).
+   249→
+   250→        Bloquea hasta que el workflow reaches terminal state.
+   251→        """
+   252→        if workflow.id not in self._running:
+   253→            await self.submit(workflow)
+   254→
+   255→        start = time.monotonic()
+   256→        result = WorkflowExecutionResult(
+   257→            workflow_id=workflow.id,
+   258→            steps_total=workflow.step_count,
+   259→        )
+   260→
+   261→        # Estado de asignaciones fallidas para reasignación.
+   262→        failed_assignments: dict[str, set[str]] = {}
+   263→
+   264→        # Control de paralelismo.
+   265→        active_steps: dict[str, asyncio.Task] = {}  # step_id -> task
+   266→        max_parallelism = 0
+   267→
+   268→        # Mapeo step_id -> agent_name (para liberar al agente al terminar).
+   269→        step_agent_map: dict[str, str] = {}
+   270→
+   271→        for _ in range(max_iterations):
+   272→            # 1. Comprobar si el workflow sigue vivo.
+   273→            if workflow.is_terminal:
+   274→                break
+   275→
+   276→            # 2. Planificar nuevos steps.
+   277→            decisions = await self._scheduler.schedule(
+   278→                workflow,
+   279→                list(self._agents.values()),
+   280→                exclude=failed_assignments,
+   281→            )
+   282→
+   283→            # 3. Lanzar steps en paralelo.
+   284→            for decision in decisions:
+   285→                step = workflow.steps.get(decision.step_id)
+   286→                if step is None:
+   287→                    continue
+   288→                agent_name = decision.agent_name
+   289→                agent = self._agents.get(agent_name)
+   290→                if agent is None:
+   291→                    continue
+   292→                await self._scheduler.mark_step_started(
+   293→                    step, agent_name, workflow
+   294→                )
+   295→                step_agent_map[step.id] = agent_name
+   296→                task = asyncio.create_task(
+   297→                    self._execute_step(workflow, step, agent)
+   298→                )
+   299→                active_steps[step.id] = task
+   300→
+   301→            max_parallelism = max(max_parallelism, len(active_steps))
+   302→
+   303→            # 4. Si no hay steps activos ni decisiones, comprobar estado.
+   304→            if not active_steps and not decisions:
+   305→                # ¿Quedan steps pendientes? Si sí y no hay agentes → fallo.
+   306→                pending = [
+   307→                    s for s in workflow.steps.values()
+   308→                    if s.status in (StepStatus.PENDING, StepStatus.READY)
+   309→                ]
+   310→                if pending:
+   311→                    # Esperar a que un agente quede libre.
+   312→                    await asyncio.sleep(0.01)
+   313→                    continue
+   314→                else:
+   315→                    # No hay nada más que hacer.
+   316→                    break
+   317→
+   318→            # 5. Esperar a que termine al menos un step.
+   319→            if active_steps:
+   320→                done, pending_tasks = await asyncio.wait(
+   321→                    active_steps.values(),
+   322→                    return_when=asyncio.FIRST_COMPLETED,
+   323→                )
+   324→                # Procesar completados.
+   325→                completed_step_ids: list[str] = []
+   326→                for step_id, task in list(active_steps.items()):
+   327→                    if task in done:
+   328→                        completed_step_ids.append(step_id)
+   329→                        try:
+   330→                            step_result = await task
+   331→                        except Exception as exc:  # noqa: BLE001
+   332→                            step_result = {
+   333→                                "success": False,
+   334→                                "error": str(exc),
+   335→                                "duration_ms": 0.0,
+   336→                            }
+   337→                        agent_name = step_agent_map.pop(step_id, "")
+   338→                        await self._handle_step_result(
+   339→                            workflow=workflow,
+   340→                            step=workflow.steps[step_id],
+   341→                            agent_name=agent_name,
+   342→                            step_result=step_result,
+   343→                            failed_assignments=failed_assignments,
+   344→                            result=result,
+   345→                        )
+   346→                        del active_steps[step_id]
+   347→                continue
+   348→
+   349→        # 6. Workflow terminó (o se agotaron iteraciones).
+   350→        result.duration_ms = (time.monotonic() - start) * 1000.0
+   351→        result.parallelism_max = max_parallelism
+   352→        result.steps_completed = workflow.completed_count
+   353→        result.steps_failed = workflow.failed_count
+   354→        result.steps_skipped = sum(
+   355→            1 for s in workflow.steps.values() if s.status == StepStatus.SKIPPED
+   356→        )
+   357→        result.status = workflow.status
+   358→        result.result = workflow.result
+   359→        if workflow.status == WorkflowStatus.FAILED:
+   360→            # Buscar el error del primer step REQUIRED fallido.
+   361→            for s in workflow.steps.values():
+   362→                if s.status == StepStatus.FAILED and s.criticality == StepCriticality.REQUIRED:
+   363→                    result.error = s.error
+   364→                    break
+   365→
+   366→        # Emitir evento final.
+   367→        final_event = (
+   368→            WorkflowEvent.WORKFLOW_COMPLETED
+   369→            if workflow.status == WorkflowStatus.COMPLETED
+   370→            else WorkflowEvent.WORKFLOW_FAILED
+   371→            if workflow.status == WorkflowStatus.FAILED
+   372→            else WorkflowEvent.WORKFLOW_CANCELLED
+   373→        )
+   374→        await self._emit(
+   375→            final_event,
+   376→            source="engine",
+   377→            payload=result.to_dict(),
+   378→            correlation_id=workflow.id,
+   379→        )
+   380→
+   381→        return result
+   382→
+   383→    async def cancel(self, workflow_id: str, reason: str = "") -> bool:
+   384→        """Cancela un workflow en ejecución."""
+   385→        workflow = self._running.get(workflow_id)
+   386→        if workflow is None:
+   387→            return False
+   388→        if workflow.is_terminal:
+   389→            return False
+   390→        workflow.transition_to(WorkflowStatus.CANCELLED)
+   391→        # Marcar steps no terminales como CANCELLED.
+   392→        for step in workflow.steps.values():
+   393→            if not step.is_terminal:
+   394→                try:
+   395→                    step.transition_to(StepStatus.CANCELLED)
+   396→                except ValueError:
+   397→                    pass
+   398→        await self._emit(
+   399→            WorkflowEvent.WORKFLOW_CANCELLED,
+   400→            source="engine",
+   401→            payload={"workflow_id": workflow_id, "reason": reason},
+   402→            correlation_id=workflow_id,
+   403→        )
+   404→        return True
+   405→
+   406→    async def pause(self, workflow_id: str) -> bool:
+   407→        """Pausa un workflow (no interrumpe steps en curso)."""
+   408→        workflow = self._running.get(workflow_id)
+   409→        if workflow is None or workflow.status != WorkflowStatus.RUNNING:
+   410→            return False
+   411→        workflow.transition_to(WorkflowStatus.PAUSED)
+   412→        await self._emit(
+   413→            WorkflowEvent.WORKFLOW_PAUSED,
+   414→            source="engine",
+   415→            payload={"workflow_id": workflow_id},
+   416→            correlation_id=workflow_id,
+   417→        )
+   418→        return True
+   419→
+   420→    async def resume(self, workflow_id: str) -> bool:
+   421→        """Reanuda un workflow pausado."""
+   422→        workflow = self._running.get(workflow_id)
+   423→        if workflow is None or workflow.status != WorkflowStatus.PAUSED:
+   424→            return False
+   425→        workflow.transition_to(WorkflowStatus.RUNNING)
+   426→        await self._emit(
+   427→            WorkflowEvent.WORKFLOW_RESUMED,
+   428→            source="engine",
+   429→            payload={"workflow_id": workflow_id},
+   430→            correlation_id=workflow_id,
+   431→        )
+   432→        return True
+   433→
+   434→    # ------------------------------------------------------------------
+   435→    # Ejecución de un step
+   436→    # ------------------------------------------------------------------
+   437→
+   438→    async def _execute_step(
+   439→        self,
+   440→        workflow: Workflow,
+   441→        step: Step,
+   442→        agent: BaseAgent,
+   443→    ) -> dict[str, Any]:
+   444→        """Ejecuta un step en un agente y devuelve el resultado."""
+   445→        task_dict = {
+   446→            "id": step.id,
+   447→            "name": step.name,
+   448→            "description": step.action,
+   449→            "payload": {**step.input, "action": step.action},
+   450→            "priority": workflow.priority.value,
+   451→            "workflow_id": workflow.id,
+   452→            "context": workflow.context,
+   453→        }
+   454→        # Log start.
+   455→        await self._logger.log_start(
+   456→            agent.name, step.id, f"workflow step: {step.name}"
+   457→        )
+   458→        start = time.monotonic()
+   459→        result = await agent.execute(task_dict)
+   460→        duration_ms = (time.monotonic() - start) * 1000.0
+   461→        success = result.get("status") == "ok"
+   462→        # Log end.
+   463→        if success:
+   464→            inner = result.get("result", {})
+   465→            await self._logger.log_end(
+   466→                agent.name, step.id,
+   467→                duration_ms=duration_ms,
+   468→                tokens_prompt=int(inner.get("tokens_prompt", 0)) if isinstance(inner, dict) else 0,
+   469→                tokens_completion=int(inner.get("tokens_completion", 0)) if isinstance(inner, dict) else 0,
+   470→                tools_used=inner.get("tools_used", []) if isinstance(inner, dict) else [],
+   471→            )
+   472→            # Registrar herramientas usadas.
+   473→            if isinstance(inner, dict):
+   474→                for tool in inner.get("tools_used", []):
+   475→                    await self._emit(
+   476→                        WorkflowEvent.TOOL_EXECUTED,
+   477→                        source=agent.name,
+   478→                        payload={
+   479→                            "workflow_id": workflow.id,
+   480→                            "step_id": step.id,
+   481→                            "tool": tool,
+   482→                        },
+   483→                        correlation_id=workflow.id,
+   484→                    )
+   485→            # Actualizar step.
+   486→            step.output = inner
+   487→            step.record_execution(
+   488→                duration_ms=duration_ms,
+   489→                tokens_prompt=int(inner.get("tokens_prompt", 0)) if isinstance(inner, dict) else 0,
+   490→                tokens_completion=int(inner.get("tokens_completion", 0)) if isinstance(inner, dict) else 0,
+   491→                tools_used=inner.get("tools_used", []) if isinstance(inner, dict) else None,
+   492→                files_modified=inner.get("files_modified", []) if isinstance(inner, dict) else None,
+   493→            )
+   494→            # Actualizar contexto.
+   495→            ctx = self._contexts.get(workflow.id)
+   496→            if ctx is not None and isinstance(inner, dict):
+   497→                if "files_modified" in inner:
+   498→                    for path in inner["files_modified"]:
+   499→                        await ctx.register_file(path, None, modified_by=agent.name)
+   500→        else:
+   501→            await self._logger.log_error(
+   502→                agent.name, step.id,
+   503→                result.get("error", "unknown"),
+   504→            )
+   505→        return {
+   506→            "success": success,
+   507→            "error": result.get("error"),
+   508→            "duration_ms": duration_ms,
+   509→            "result": result.get("result"),
+   510→        }
+   511→
+   512→    # ------------------------------------------------------------------
+   513→    # Manejo del resultado de un step (failover)
+   514→    # ------------------------------------------------------------------
+   515→
+   516→    async def _handle_step_result(
+   517→        self,
+   518→        *,
+   519→        workflow: Workflow,
+   520→        step: Step,
+   521→        agent_name: str,
+   522→        step_result: dict[str, Any],
+   523→        failed_assignments: dict[str, set[str]],
+   524→        result: WorkflowExecutionResult,
+   525→    ) -> None:
+   526→        """Procesa el resultado de un step y decide el failover."""
+   527→        success = step_result.get("success", False)
+   528→        duration_ms = step_result.get("duration_ms", 0.0)
+   529→        error = step_result.get("error")
+   530→
+   531→        await self._scheduler.mark_step_finished(
+   532→            step, agent_name, workflow,
+   533→            success=success,
+   534→            duration_ms=duration_ms,
+   535→            error=error if not success else None,
+   536→        )
+   537→
+   538→        if success:
+   539→            # ¿Workflow completo?
+   540→            if workflow.progress >= 1.0:
+   541→                workflow.transition_to(WorkflowStatus.COMPLETED)
+   542→                workflow.result = step_result.get("result")
+   543→            return
+   544→
+   545→        # Failover.
+   546→        action = self._decide_failover(step, failed_assignments)
+   547→        if action == FailoverAction.RETRY:
+   548→            step.retry += 1
+   549→            step.error = None
+   550→            step.transition_to(StepStatus.READY)
+   551→            # Resetear el agente a IDLE para que pueda aceptar el retry
+   552→            # (tras un fallo, BaseAgent.execute() lo deja en ERROR).
+   553→            agent = self._agents.get(agent_name)
+   554→            if agent is not None and agent.status == AgentStatus.ERROR:
+   555→                agent._set_status(AgentStatus.IDLE)  # noqa: SLF001
+   556→            result.retry_count += 1
+   557→            await self._emit(
+   558→                WorkflowEvent.STEP_RETRY,
+   559→                source="engine",
+   560→                payload={
+   561→                    "workflow_id": workflow.id,
+   562→                    "step_id": step.id,
+   563→                    "attempt": step.retry,
+   564→                },
+   565→                correlation_id=workflow.id,
+   566→            )
+   567→        elif action == FailoverAction.REASSIGN:
+   568→            # Marcar el agente como fallido para este step.
+   569→            failed_assignments.setdefault(step.id, set()).add(agent_name)
+   570→            step.agent_reassigned.append(agent_name)
+   571→            step.error = None
+   572→            step.transition_to(StepStatus.READY)
+   573→            # Resetear el agente (queda en ERROR tras el fallo).
+   574→            agent = self._agents.get(agent_name)
+   575→            if agent is not None and agent.status == AgentStatus.ERROR:
+   576→                agent._set_status(AgentStatus.IDLE)  # noqa: SLF001
+   577→            result.reassign_count += 1
+   578→            await self._emit(
+   579→                WorkflowEvent.AGENT_REASSIGNED,
+   580→                source="engine",
+   581→                payload={
+   582→                    "workflow_id": workflow.id,
+   583→                    "step_id": step.id,
+   584→                    "from_agent": agent_name,
+   585→                    "excluded": list(failed_assignments[step.id]),
+   586→                },
+   587→                correlation_id=workflow.id,
+   588→            )
+   589→        elif action == FailoverAction.SKIP:
+   590→            step.transition_to(StepStatus.SKIPPED)
+   591→            await self._emit(
+   592→                WorkflowEvent.STEP_SKIPPED,
+   593→                source="engine",
+   594→                payload={
+   595→                    "workflow_id": workflow.id,
+   596→                    "step_id": step.id,
+   597→                    "reason": "optional step failed",
+   598→                },
+   599→                correlation_id=workflow.id,
+   600→            )
+   601→            # Propagar SKIP a dependientes (no pueden ejecutarse sin su dep).
+   602→            self._propagate_skip(workflow, step.id)
+   603→            # ¿Workflow completo tras skip?
+   604→            if self._all_steps_terminal(workflow):
+   605→                required_failed = any(
+   606→                    s.status == StepStatus.FAILED and s.criticality == StepCriticality.REQUIRED
+   607→                    for s in workflow.steps.values()
+   608→                )
+   609→                if not required_failed:
+   610→                    workflow.transition_to(WorkflowStatus.COMPLETED)
+   611→                    workflow.result = {"skipped_steps": [
+   612→                        s.id for s in workflow.steps.values() if s.status == StepStatus.SKIPPED
+   613→                    ]}
+   614→        else:  # NONE or CANCEL
+   615→            # Marcar como fallo definitivo.
+   616→            # Si el step es REQUIRED y cancel_on_required_fail, cancelar workflow.
+   617→            if (
+   618→                step.criticality == StepCriticality.REQUIRED
+   619→                and self._failover.cancel_on_required_fail
+   620→            ):
+   621→                workflow.transition_to(WorkflowStatus.FAILED)
+   622→                # Propagar SKIP a dependientes (no pueden ejecutarse).
+   623→                self._propagate_skip(workflow, step.id)
+   624→            else:
+   625→                # Step OPTIONAL fallido definitivo: dejarlo FAILED pero
+   626→                # permitir que el workflow continúe.
+   627→                # Propagar SKIP a dependientes.
+   628→                self._propagate_skip(workflow, step.id)
+   629→                if self._all_steps_terminal(workflow):
+   630→                    required_failed = any(
+   631→                        s.status == StepStatus.FAILED and s.criticality == StepCriticality.REQUIRED
+   632→                        for s in workflow.steps.values()
+   633→                    )
+   634→                    if not required_failed and workflow.completed_count > 0:
+   635→                        workflow.transition_to(WorkflowStatus.COMPLETED)
+   636→                    elif required_failed:
+   637→                        workflow.transition_to(WorkflowStatus.FAILED)
+   638→
+   639→    def _decide_failover(
+   640→        self,
+   641→        step: Step,
+   642→        failed_assignments: dict[str, set[str]],
+   643→    ) -> FailoverAction:
+   644→        """Decide la acción de failover para un step fallido."""
+   645→        # 1. Retry si quedan intentos.
+   646→        if step.retry < self._failover.max_retries:
+   647→            return FailoverAction.RETRY
+   648→        # 2. Reasignar si está habilitado y no hemos excedido el máximo.
+   649→        if (
+   650→            self._failover.reassign_on_fail
+   651→            and len(step.agent_reassigned) < self._failover.max_reassigns
+   652→        ):
+   653→            return FailoverAction.REASSIGN
+   654→        # 3. Skip si es opcional.
+   655→        if (
+   656→            step.criticality == StepCriticality.OPTIONAL
+   657→            and self._failover.skip_optional_on_fail
+   658→        ):
+   659→            return FailoverAction.SKIP
+   660→        # 4. Cancelar workflow si es required y cancel_on_required_fail.
+   661→        if (
+   662→            step.criticality == StepCriticality.REQUIRED
+   663→            and self._failover.cancel_on_required_fail
+   664→        ):
+   665→            return FailoverAction.CANCEL
+   666→        return FailoverAction.NONE
+   667→
+   668→    def _all_steps_terminal(self, workflow: Workflow) -> bool:
+   669→        """Devuelve True si todos los steps están en estado terminal."""
+   670→        return all(s.is_terminal for s in workflow.steps.values())
+   671→
+   672→    def _propagate_skip(self, workflow: Workflow, skipped_step_id: str) -> None:
+   673→        """Propaga SKIP a todos los dependientes del step saltado.
+   674→
+   675→        Esto evita que el engine intente ejecutar steps cuyas dependencias
+   676→        no se completaron. Los dependientes se marcan como SKIPPED en cadena.
+   677→        """
+   678→        dependents = workflow.dag.dependents_of(skipped_step_id)
+   679→        for dep_id in dependents:
+   680→            dep_step = workflow.steps.get(dep_id)
+   681→            if dep_step is None or dep_step.is_terminal:
+   682→                continue
+   683→            try:
+   684→                dep_step.transition_to(StepStatus.SKIPPED)
+   685→                # Recursión para propagar en cadena.
+   686→                self._propagate_skip(workflow, dep_id)
+   687→            except ValueError:
+   688→                # El step ya está en un estado que no permite SKIP.
+   689→                pass
+   690→
+   691→    # ------------------------------------------------------------------
+   692→    # Métricas / observabilidad
+   693→    # ------------------------------------------------------------------
+   694→
+   695→    def metrics(self) -> dict[str, Any]:
+   696→        """Métricas agregadas del engine."""
+   697→        return {
+   698→            "scheduler": self._scheduler.stats(),
+   699→            "load_balancer": self._lb.stats(),
+   700→            "event_bus": self._bus.metrics(),
+   701→            "logger": self._logger.stats(),
+   702→            "running_workflows": len(self._running),
+   703→            "registered_agents": len(self._agents),
+   704→        }
+   705→
+   706→    def workflow_metrics(self, workflow_id: str) -> dict[str, Any] | None:
+   707→        """Métricas de un workflow específico."""
+   708→        wf = self._running.get(workflow_id)
+   709→        if wf is None:
+   710→            return None
+   711→        return wf.metrics()
+   712→
+   713→    # ------------------------------------------------------------------
+   714→    # Internos
+   715→    # ------------------------------------------------------------------
+   716→
+   717→    async def _emit(
+   718→        self,
+   719→        event_type: WorkflowEvent,
+   720→        *,
+   721→        source: str,
+   722→        payload: dict[str, Any],
+   723→        correlation_id: str | None = None,
+   724→    ) -> None:
+   725→        try:
+   726→            await self._bus.publish(
+   727→                event_type,
+   728→                source=source,
+   729→                payload=payload,
+   730→                correlation_id=correlation_id,
+   731→            )
+   732→        except Exception:  # noqa: BLE001
+   733→            logger.exception("Failed to emit event %s", event_type)
+   734→
+   735→
+   736→__all__ = [
+   737→    "FailoverPolicy",
+   738→    "WorkflowEngine",
+   739→    "WorkflowExecutionResult",
+   740→]
+   741→
