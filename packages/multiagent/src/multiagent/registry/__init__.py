@@ -1,4 +1,4 @@
-"""Registry subpackage (Sprint 2.2/2).
+"""Registry subpackage (Sprint 2.2/2 + 2.3).
 
 Public API:
 
@@ -6,6 +6,8 @@ Public API:
 - `AgentRecord`, `AgentRegistry`
 - `CapabilityResolver`, `ResolutionResult`, `ResolverWeights`
 - `BackwardCompatibilityAdapter`
+- `AgentManifest`, `standard_manifests` (Sprint 2.3)
+- `LifecycleManager`, `LifecycleState`, `LifecycleHealth` (Sprint 2.3)
 """
 
 from __future__ import annotations
@@ -21,18 +23,31 @@ from .capability import (
     CapabilityRegistry,
     register_standard_capabilities,
 )
+from .lifecycle import (
+    LifecycleHealth,
+    LifecycleManager,
+    LifecycleState,
+    can_transition_lifecycle,
+)
+from .manifest import AgentManifest, standard_manifests
 from .resolver import CapabilityResolver, ResolutionResult, ResolverWeights
 
 __all__ = [
     "ACTION_TO_CAPABILITY",
     "AGENT_NAME_TO_CAPABILITIES",
+    "AgentManifest",
     "AgentRecord",
     "AgentRegistry",
     "BackwardCompatibilityAdapter",
     "Capability",
     "CapabilityRegistry",
     "CapabilityResolver",
+    "LifecycleHealth",
+    "LifecycleManager",
+    "LifecycleState",
     "ResolutionResult",
     "ResolverWeights",
+    "can_transition_lifecycle",
     "register_standard_capabilities",
+    "standard_manifests",
 ]

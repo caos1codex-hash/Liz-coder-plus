@@ -35,11 +35,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..base import BaseAgent
 from ..enums import AgentStatus, HealthState
 from .capability import Capability, CapabilityRegistry
+
+if TYPE_CHECKING:
+    from .manifest import AgentManifest
 
 logger = logging.getLogger(__name__)
 
@@ -802,6 +805,120 @@ class AgentRegistry:
         if record_id is not None:
             return self._records.get(record_id)
         return None
+
+    # ------------------------------------------------------------------
+    # Sprint 2.3 — API simplificada + soporte de Manifest
+    # ------------------------------------------------------------------
+
+    async def register_simple(
+        self,
+        agent: BaseAgent,
+        *,
+        capabilities: list[str] | None = None,
+        priority: int = 0,
+    ) -> AgentRecord:
+        """Registro simplificado (Sprint 2.3).
+
+        Equivalente a::
+
+            await registry.register(
+                agent,
+                provided_capabilities=capabilities,
+                priority=priority,
+            )
+
+        Si `capabilities` es None, se infieren automáticamente desde los
+        `objectives` y `tools` del agente.
+        """
+        if capabilities is None:
+            capabilities = self._infer_capabilities(agent)
+        return await self.register(
+            agent,
+            provided_capabilities=capabilities,
+            priority=priority,
+            replace_existing=True,
+        )
+
+    async def register_with_manifest(
+        self,
+        agent: BaseAgent,
+        manifest: "AgentManifest",
+    ) -> AgentRecord:
+        """Registra un agente usando un `AgentManifest` explícito.
+
+        El manifest aporta id, name, version, capabilities, priority y
+        metadata de forma declarativa. El agente subyacente debe tener
+        el mismo `name` que el manifest (o se le asigna).
+        """
+        return await self.register(
+            agent,
+            provided_capabilities=list(manifest.capabilities),
+            priority=manifest.priority,
+            metadata=dict(manifest.metadata),
+            version=manifest.version,
+            replace_existing=True,
+        )
+
+    def list_agents(self) -> list[AgentRecord]:
+        """Alias simplificado de `get_all()` (Sprint 2.3).
+
+        Devuelve todos los registros del registry.
+        """
+        return self.get_all()
+
+    def list_manifests(self) -> list["AgentManifest"]:
+        """Devuelve el manifest de cada agente registrado (Sprint 2.3).
+
+        Si un agente no tiene manifest explícito, se construye uno
+        sintético a partir de su AgentRecord.
+        """
+        from .manifest import AgentManifest
+        manifests: list[AgentManifest] = []
+        for record in self.get_all():
+            # Si el agente expone un método manifest(), usarlo.
+            agent = record.agent
+            if hasattr(agent, "manifest") and callable(agent.manifest):
+                try:
+                    m = agent.manifest()
+                    if isinstance(m, AgentManifest):
+                        manifests.append(m)
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
+            # Sintetizar desde el record.
+            manifests.append(AgentManifest(
+                id=record.name.lower().replace(" ", "_"),
+                name=record.name,
+                version=record.version,
+                description=record.description,
+                capabilities=list(record.provided_capabilities),
+                priority=record.priority,
+                metadata=dict(record.metadata),
+            ))
+        return manifests
+
+    def find_by_capability_simple(self, capability: str) -> list[AgentRecord]:
+        """Búsqueda simplificada por capability (Sprint 2.3).
+
+        A diferencia de `find_by_capability`, no filtra por disponibilidad:
+        devuelve todos los agentes que proveen la capability, ordenados
+        por prioridad desc y usage asc.
+
+        Útil para discovery: "¿qué agentes saben de python?"
+        """
+        results: list[AgentRecord] = []
+        for record in self._records.values():
+            if record.provides(capability):
+                results.append(record)
+        results.sort(key=lambda r: (-r.priority, r.usage_count))
+        return results
+
+    def find_manifests_by_capability(self, capability: str) -> list["AgentManifest"]:
+        """Devuelve manifests de agentes que proveen una capability (Sprint 2.3)."""
+        return [
+            m for m in self.list_manifests()
+            if m.has_capability(capability)
+        ]
 
     async def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         """Emite un evento al EventBus (best-effort)."""
