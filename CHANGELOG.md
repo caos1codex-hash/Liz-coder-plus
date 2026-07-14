@@ -2,9 +2,11 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Sprint 2.3 — Agent Lifecycle & Registry Integration
+## [0.7.0] — 2026-07-14 — Sprint 2.3 estable
 
-### Added
+### Sprint 2.3 — Agent Lifecycle & Registry Integration
+
+#### Added
 - **`AgentManifest`** (`registry/manifest.py`): contrato declarativo inmutable
   con validaciones (ID lowercase, version semver, no caps duplicadas,
   priority >= 0). `standard_manifests()` devuelve 7 manifests para los
@@ -25,7 +27,7 @@ All notable changes to this project are documented here.
 - **Tests**: 100 nuevos en `tests/agents/` (test_manifest, test_lifecycle,
   test_registry, test_discovery).
 
-### Fixed
+#### Fixed
 - `AgentOrchestrator.register_agent` ahora usa duck-typing (hasattr) en
   lugar de `isinstance` para ser robusto frente a re-imports del módulo.
 - `AgentRegistry.list_manifests` usa duck-typing para validar manifests
@@ -33,8 +35,33 @@ All notable changes to this project are documented here.
 - `RegistryOrchestrator.request` sincroniza el lifecycle antes de `start()`
   para que `started_count` incremente correctamente en ejecuciones múltiples.
 
+### Sprint 2.3.1 — Stabilization & Release Preparation
+
+#### Added
+- **Auditoría completa**: `docs/sprint-2.3.1-audit.md` con análisis de
+  imports, dependencias circulares, duplicación, nombres, APIs públicas.
+- **Tests de compatibilidad**: `tests/agents/test_api_compatibility.py`
+  con 23 contract tests que verifican APIs clave (AgentRegistry, Lifecycle,
+  RegistryOrchestrator, AgentManifest, BaseAgent, WorkflowEngine).
+- **Performance baseline**: `docs/performance-baseline.md` con 9 métricas
+  de tiempo y 2 de memoria. `scripts/perf_baseline.py` reproducible.
+
+#### Fixed
+- mypy: `_PATTERNS` en `planner.py` tipado incorrectamente (3 errores).
+- mypy: `AgentOrchestrator.send_to` no aceptaba `correlation_id`. Añadido
+  parámetro opcional.
+- mypy: `# type: ignore[assignment]` en `api.py` no cubría código `misc`.
+- `__init__.py` raíz ahora exporta `RegistryOrchestrator`, `AgentManifest`,
+  `LifecycleManager`, `LifecycleState`, `standard_manifests`, etc.
+
+#### Quality
+- ruff check: All checks passed!
+- mypy: Success, no issues found in 39 source files
+- pytest: 457 tests passing (434 + 23 compat tests)
+- Performance: discovery <0.01ms, request <1ms, bootstrap <1ms
+
 ### Compatibilidad
-- Sprint 2.1+2.2: 334/334 tests siguen pasando.
+- Sprint 2.1+2.2: 334 tests siguen pasando.
 - Sprint 1: 56+ tests verificados siguen pasando.
 - `AgentOrchestrator`, `WorkflowOrchestrator` y `WorkflowEngine` coexisten
   sin cambios.
