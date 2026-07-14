@@ -348,10 +348,21 @@ class AgentRegistry:
         Raises:
             ValueError: Si ya existe un agente con el mismo nombre y
                 replace_existing=False.
+            TypeError: Si el objeto no parece un BaseAgent.
         """
-        if not isinstance(agent, BaseAgent):
+        # Duck-typing: verificar atributos clave en lugar de isinstance,
+        # para ser robusto frente a re-imports del módulo durante los
+        # tests (que crean clases BaseAgent distintas con el mismo nombre).
+        if not (
+            hasattr(agent, "name")
+            and hasattr(agent, "status")
+            and hasattr(agent, "health")
+            and hasattr(agent, "execute")
+            and hasattr(agent, "start")
+            and hasattr(agent, "stop")
+        ):
             raise TypeError(
-                f"Expected BaseAgent, got {type(agent).__name__}"
+                f"Expected BaseAgent (or compatible), got {type(agent).__name__}"
             )
 
         async with self._lock:
