@@ -27,7 +27,7 @@ from ..enums import Permission, Priority
 from ..workflow.planner_ext import plan_workflow
 
 
-_PATTERNS: list[tuple[str, list[str], list[str]]] = [
+_PATTERNS: list[tuple[str, str, list[str]]] = [
     # (id, regex, subtask_names)
     ("file_op", r"\b(lee|leer|le\xe9|escrib\w*|guarda\w*|lista\w*)\w*\s+.+\s+archivo", ["read", "process", "write"]),
     ("terminal", r"\b(ejecut\w*|corr\w*|run|terminal|shell|bash|cmd)\b", ["validate", "execute", "respond"]),

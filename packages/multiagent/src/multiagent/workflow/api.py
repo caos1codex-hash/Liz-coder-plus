@@ -33,11 +33,11 @@ try:
     FASTAPI_AVAILABLE = True
 except ImportError:  # pragma: no cover
     FASTAPI_AVAILABLE = False
-    APIRouter = None  # type: ignore[assignment]
-    HTTPException = None  # type: ignore[assignment]
-    BackgroundTasks = None  # type: ignore[assignment]
-    BaseModel = object  # type: ignore[assignment]
-    Field = None  # type: ignore[assignment]
+    APIRouter = None  # type: ignore[assignment,misc]
+    HTTPException = None  # type: ignore[assignment,misc]
+    BackgroundTasks = None  # type: ignore[assignment,misc]
+    BaseModel = object  # type: ignore[assignment,misc]
+    Field = None  # type: ignore[assignment,misc]
 
 from .enums import StepCriticality
 from .models import Step, Workflow

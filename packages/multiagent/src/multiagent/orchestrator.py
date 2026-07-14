@@ -356,6 +356,7 @@ class AgentOrchestrator:
         payload: dict[str, Any] | None = None,
         *,
         priority: Priority = Priority.NORMAL,
+        correlation_id: str | None = None,
     ) -> Message:
         """Envía un mensaje a un agente concreto."""
         from .enums import MessageType as _MT
@@ -366,6 +367,7 @@ class AgentOrchestrator:
             type=msg_type,
             payload=payload or {},
             priority=priority,
+            correlation_id=correlation_id,
         )
         await self._bus.publish(msg)
         return msg
