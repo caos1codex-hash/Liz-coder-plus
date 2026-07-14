@@ -2,7 +2,59 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased] — Sprint 2.8 — Intelligent Task Planner & Execution Engine
+## [Unreleased] — Sprint 2.9 — Agent Communication & Collaboration Layer
+
+### Sprint 2.9 — Agent Communication & Collaboration Layer
+
+#### Added
+- **New package `packages/communication/`** — formal agent communication
+  layer that wraps (does not replace) the existing `MessageBus`,
+  `Message`, and `WorkflowOrchestrator` APIs. Adds persistence,
+  tracing, collaboration tracking, and timeouts.
+- **`AgentMessage`** (`communication/protocol.py`): canonical inter-agent
+  message with the 6 types required by the spec (TASK_REQUEST,
+  TASK_RESPONSE, STATUS_UPDATE, ERROR_REPORT, CONTEXT_TRANSFER,
+  HANDOFF). Fields: message_id, sender_agent, receiver_agent, task_id,
+  timestamp, message_type, payload, metadata, correlation_id, priority,
+  ttl, in_reply_to. Factory constructors + reply helper + wire-format
+  bridge to/from `multiagent.messages.Message`.
+- **`AgentMessageBus`** (`communication/bus.py`): facade over the
+  existing `MessageBus`. Adds persistence (via `MessageRepository`),
+  TTL enforcement, tracing (history ring buffer), metrics, event-bus
+  bridging, and convenience senders. Works standalone or wrapping a
+  real `MessageBus`.
+- **`CollaborationManager`** (`communication/collaboration.py`):
+  coordinates multi-agent collaborations with `delegate`,
+  `request_help`, `transfer_context`, `handoff`,
+  `wait_for_response`, `wait_for_completion`. Auto-routes responses,
+  enforces timeouts, handles failures, records metrics.
+- **`Collaboration`** dataclass: tracks initiator, participant, initial
+  message, all related messages (by correlation_id), status, result,
+  error, timestamps. Statuses: INITIATED, IN_PROGRESS, COMPLETED,
+  FAILED, TIMED_OUT, CANCELLED.
+- **`MessageRepository`** (`communication/repository.py`): persists
+  inter-agent messages via the existing `ExecutionRepository` (no new
+  SQLite schema). Also provides `InMemoryMessageRepository` for tests.
+  Queries: by correlation_id, sender, receiver, task_id, type, recent.
+- **`RegistryAdapter`** (`communication/integration.py`): wraps
+  `AgentRegistry` (Sprint 2.2-2) for agent lookup.
+- **`OrchestratorAdapter`** (`communication/integration.py`): wraps
+  `WorkflowOrchestrator` (Sprint 2.2) and exposes the new
+  communication API.
+- **`build_integrated_bus()` / `build_integrated_manager()`**
+  (`communication/integration.py`): convenience factories.
+- **Tests**: 137 unit + integration tests covering protocol, repository,
+  bus, collaboration, and end-to-end integration with the real
+  `MessageBus`, `AgentRegistry`, and `EventBus`.
+
+#### Compatibility
+- **No breaking changes** to existing modules (Sprint 2.1-2.8).
+- New package only; existing packages are untouched.
+- The planner package (Sprint 2.8) continues to work — 431 tests pass.
+- All 221 multi-agent/registry/workflow tests still pass.
+- Zero hard dependencies on multiagent/memory/workflow at import time.
+
+## [0.8.0] — Sprint 2.8 — Intelligent Task Planner & Execution Engine
 
 ### Sprint 2.8 — Intelligent Task Planner & Execution Engine
 
