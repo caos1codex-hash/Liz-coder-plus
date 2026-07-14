@@ -126,7 +126,13 @@ class AgentOrchestrator:
 
     async def register_agent(self, agent: BaseAgent) -> BaseAgent:
         """Registra un agente. Lanza ValueError si se excede el máximo."""
-        if not isinstance(agent, BaseAgent):
+        # Duck-typing: verificar atributos clave en lugar de isinstance,
+        # para ser robusto frente a re-imports del módulo durante tests.
+        if not (
+            hasattr(agent, "name")
+            and hasattr(agent, "status")
+            and hasattr(agent, "execute")
+        ):
             raise TypeError(
                 f"Expected BaseAgent instance, got {type(agent).__name__}"
             )

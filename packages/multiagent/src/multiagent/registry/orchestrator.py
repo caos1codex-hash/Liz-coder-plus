@@ -327,6 +327,9 @@ class RegistryOrchestrator:
         lifecycle = self._lifecycles.get(record.name)
         if lifecycle is not None:
             result.lifecycle_before = lifecycle.state.value
+            # Sincronizar el lifecycle desde el agent.status (puede haber
+            # vuelto a IDLE tras una ejecución anterior).
+            lifecycle.health_check()  # sincroniza
             try:
                 await lifecycle.start()
             except RuntimeError as exc:

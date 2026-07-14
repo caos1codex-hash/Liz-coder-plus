@@ -880,8 +880,17 @@ class AgentRegistry:
             if hasattr(agent, "manifest") and callable(agent.manifest):
                 try:
                     m = agent.manifest()
-                    if isinstance(m, AgentManifest):
-                        manifests.append(m)
+                    # Duck-typing: aceptar cualquier objeto con los campos
+                    # clave (id, name, version, capabilities, priority) para
+                    # ser robusto frente a re-imports del módulo AgentManifest.
+                    if (
+                        hasattr(m, "id")
+                        and hasattr(m, "name")
+                        and hasattr(m, "version")
+                        and hasattr(m, "capabilities")
+                        and hasattr(m, "priority")
+                    ):
+                        manifests.append(m)  # type: ignore[arg-type]
                         continue
                 except Exception:  # noqa: BLE001
                     pass
