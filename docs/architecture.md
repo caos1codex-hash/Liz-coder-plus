@@ -1837,3 +1837,89 @@ plan = planner.create_from_goal("Crear una página web para una tienda")
 - No modifica código de Sprint 1, 2, ni 3.1.
 - 124 tests nuevos en `tests/unit/test_planner_v32.py`.
 - Total planner tests: 292. Total proyecto: 1105.
+
+## 18. Sprint 3.3 — Agent-Aware Planning Integration
+
+### 18.1 Resumen
+
+Sprint 3.3 conecta el Planner Engine (Sprint 3.2) con el sistema de
+Agentes (Sprint 2.x) para que los planes generados sean conscientes de
+las capacidades reales de los agentes registrados.  El planner ya no
+asigna agentes por heurística aislada; consulta el `AgentRegistry` y
+el `CapabilityResolver` para producir asignaciones basadas en
+disponibilidad, prioridad y *scoring* ponderado.
+
+**No implementa ejecución** — este sprint se limita a la integración
+de planificación.  La ejecución de planes con agentes se prevé para un
+sprint futuro.
+
+### 18.2 Flujo de selección de agentes
+
+```mermaid
+flowchart LR
+    Goal[Goal / Objetivo] --> TA[TaskAnalyzer]
+    TA --> TP[TaskPlan]
+    TP --> CM[CapabilityMapper]
+    CM --> AS[AgentSelector]
+    AS --> AA[AgentAssignment]
+```
+
+1. **Goal** — el usuario proporciona un objetivo en lenguaje natural.
+2. **TaskAnalyzer** (Sprint 3.2) analiza el objetivo y detecta el tipo
+   de tarea, complejidad y agentes sugeridos.
+3. **TaskPlan** — `PlanGenerator` produce un `TaskPlan` con pasos y
+   agentes sugeridos.
+4. **CapabilityMapper** (nuevo) mapea cada `PlanStep.suggested_agent`
+   a una lista de `Capability` requeridas, usando reglas configurables.
+5. **AgentSelector** (nuevo) resuelve cada conjunto de capabilities
+   contra el `AgentRegistry` vía `CapabilityResolver`, obteniendo el
+   mejor agente disponible con su *score* ponderado.
+6. **AgentAssignment** (nuevo) reemplaza las sugerencias del plan con
+   asignaciones concretas (`step.assigned_agent`, `step.confidence`).
+
+### 18.3 Relación Planner ↔ Agent System
+
+El planner (paquete `packages/planner/`) y el sistema de agentes
+(paquete `packages/multiagent/`) evolucionaron de forma independiente
+en sprints anteriores.  Sprint 3.3 introduce un puente unidireccional:
+
+```
+Planner ──→ Agent System  (consulta capacidades y disponibilidad)
+Agent System ──╳─→ Planner  (sin retroalimentación en este sprint)
+```
+
+El planner **consume** información del `AgentRegistry` y
+`CapabilityResolver` para tomar decisiones de asignación, pero el
+sistema de agentes no es consciente del planner.  Esto mantiene la
+separación de responsabilidades y permite evolucionar cada subsistema
+de forma independiente.
+
+### 18.4 Nota: Arquitectura futura de ejecución
+
+La ejecución real de planes mediante agentes **no está implementada**
+en este sprint.  La arquitectura prevé un componente `PlanExecutor`
+futuro que:
+
+- Tomará un `TaskPlan` con asignaciones concretas.
+- Orquestará la ejecución paso a paso usando el `WorkflowEngine`
+  (Sprint 2.2) o el `RegistryOrchestrator` (Sprint 2.3).
+- Manejará reintentos, failover y propagación de errores.
+
+Este componente es intencionalmente fuera del alcance de Sprint 3.3.
+
+### 18.5 Nuevos módulos
+
+| Módulo | Archivo | Descripción |
+|---|---|---|
+| `agent_context` | `packages/planner/agent_context.py` | Provee acceso unificado al `AgentRegistry` y `CapabilityResolver` desde el planner. Encapsula la consulta de agentes disponibles, sus capabilities y métricas de salud. Actúa como adapter para que el planner no dependa directamente del paquete `multiagent`. |
+| `capability_mapper` | `packages/planner/capability_mapper.py` | Mapea `PlanStep.suggested_agent` (string heurístico del Sprint 3.2) a un conjunto de `Capability` requeridas. Usa reglas configurables y un diccionario de mapeo agente → capabilities. Soporta mapeo por defecto cuando no hay regla explícita. |
+| `agent_selector` | `packages/planner/agent_selector.py` | Dado un conjunto de `Capability` requeridas, consulta el `CapabilityResolver` para obtener los mejores agentes candidatos. Expone `select_best(capabilities)` → `AgentSelection` con agente, score y rank. Maneja casos sin candidatos (fallback, placeholder). |
+| `assignment` | `packages/planner/assignment.py` | Recorre los pasos de un `TaskPlan` y reemplaza `suggested_agent` con asignaciones concretas del `AgentSelector`. Produce `AgentAssignmentResult` con el plan enriquecido, confidence por paso y un resumen de cobertura. |
+| `integration` | `packages/planner/integration.py` | Punto de entrada de alto nivel que orquesta el flujo completo: `analyze → generate → map → select → assign`. Expone `create_agent_aware_plan(goal, agent_context)` como API principal de una sola línea. |
+
+### 18.6 Compatibilidad
+
+- No modifica código existente de Sprint 1, 2, ni 3.x.
+- Dependencia unidireccional: `planner` depende de `multiagent` (solo
+  lectura), nunca a la inversa.
+- Los tests de sprints anteriores siguen pasando sin cambios.

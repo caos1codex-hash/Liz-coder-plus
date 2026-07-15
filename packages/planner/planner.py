@@ -1,15 +1,16 @@
 """Task Planner — main entry point.
 
-Sprint 3.1 + 3.2 — Intelligent Task Planning Engine.
+Sprint 3.1 + 3.2 + 3.3 — Intelligent Task Planning Engine.
 
 :class:`TaskPlanner` orchestrates plan creation, validation, cloning,
 estimation, and (de)serialization by delegating to the respective
 sub-components (:class:`PlanValidator`, :class:`PlanSerializer`,
 :class:`PlannerMetrics`).
 
-As of Sprint 3.2 the planner can also **generate** plans from natural-
-language goals via :meth:`create_from_goal`, which delegates to
-:class:`PlanGenerator`.
+Sprint 3.2 added goal-to-plan generation via :meth:`create_from_goal`.
+
+Sprint 3.3 added :meth:`create_agent_aware_plan`, which enriches plans
+with real agent assignments from the agent registry.
 
 The planner **never** executes tasks — it only builds and manages plan
 structures.
@@ -240,7 +241,9 @@ class TaskPlanner(IPlanner):
 
         generator = PlanGenerator(
             analyzer=self._get_or_create_analyzer(),
-            validator=self._validator if isinstance(self._validator, PlanValidator) else None,
+            validator=(
+                self._validator if isinstance(self._validator, PlanValidator) else None
+            ),
         )
         plan = generator.generate(
             goal=goal,
@@ -249,6 +252,49 @@ class TaskPlanner(IPlanner):
             **context_kwargs,
         )
         return plan
+
+    # -- agent-aware generation (Sprint 3.3) -----------------------------------
+
+    def create_agent_aware_plan(
+        self,
+        goal: str,
+        agent_registry: Any,
+        description: str = "",
+        priority: Any | None = None,
+        **kwargs: Any,
+    ) -> TaskPlan:
+        """Generate a plan with real agent assignments from the registry.
+
+        This is a convenience shortcut that creates an
+        :class:`AgentAwarePlanner` and delegates to its
+        :meth:`AgentAwarePlanner.create_agent_aware_plan` method.
+
+        Args:
+            goal: Natural-language objective.
+            agent_registry: An :class:`AgentRegistry` instance.
+            description: Optional elaborated description.
+            priority: Optional priority override.
+            **kwargs: Additional context kwargs.
+
+        Returns:
+            A :class:`TaskPlan` with agent assignments in step metadata.
+        """
+        from .agent_context import AgentPlanningContext
+        from .capability_mapper import CapabilityMapper
+        from .integration import AgentAwarePlanner
+
+        context = AgentPlanningContext.from_registry(agent_registry)
+        mapper = CapabilityMapper.create_default()
+        aw_planner = AgentAwarePlanner(planner=self, mapper=mapper)
+
+        return aw_planner.create_agent_aware_plan(
+            goal=goal,
+            agent_registry=agent_registry,
+            description=description,
+            priority=priority,
+            context=context,
+            **kwargs,
+        )
 
     def _get_or_create_analyzer(self):
         """Lazy-create a :class:`TaskAnalyzer` if one doesn't exist."""

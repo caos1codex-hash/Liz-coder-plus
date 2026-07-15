@@ -2,7 +2,44 @@
 
 All notable changes to this project are documented here.
 
-## [0.9.0] — 2026-07-16 — Sprint 3.2 Planner Engine Core
+## [0.9.0] — 2026-07-16 — Sprint 3.3 Agent-Aware Planning Integration
+
+### Sprint 3.3 — Agent-Aware Planning Integration
+
+#### Added
+- **`packages/planner/agent_context.py`** — `AgentContext` provides
+  unified read-only access to the `AgentRegistry` and
+  `CapabilityResolver` from the planner, acting as an adapter so the
+  planner package does not depend directly on `multiagent`.
+- **`packages/planner/capability_mapper.py`** — `CapabilityMapper`
+  converts heuristic `suggested_agent` strings from Sprint 3.2 plans
+  into concrete `Capability` sets using configurable mapping rules and
+  fallback defaults.
+- **`packages/planner/agent_selector.py`** — `AgentSelector` resolves
+  required capabilities against the `CapabilityResolver` to produce
+  ranked `AgentSelection` results with scores and confidence levels.
+- **`packages/planner/assignment.py`** — `AgentAssignment` traverses
+  a `TaskPlan`, replaces heuristic agent suggestions with concrete
+  agent assignments, and produces an `AgentAssignmentResult` with
+  per-step confidence and coverage summary.
+- **`packages/planner/integration.py`** — High-level entry point
+  orchestrating the full flow: `analyze → generate → map → select →
+  assign`. Exposes `create_agent_aware_plan(goal, agent_context)` as
+  a single-line API.
+- The planner now produces agent-aware plans that reflect the actual
+  capabilities and availability of registered agents, bridging Sprint
+  3.2 (rule-based generation) with Sprint 2.x (agent registry).
+- No plan execution is implemented in this sprint — integration is
+  limited to planning only.
+
+#### New Files
+- `packages/planner/agent_context.py`
+- `packages/planner/capability_mapper.py`
+- `packages/planner/agent_selector.py`
+- `packages/planner/assignment.py`
+- `packages/planner/integration.py`
+
+## [0.8.0] — 2026-07-16 — Sprint 3.2 Planner Engine Core
 
 ### Sprint 3.2 — Goal-to-Plan Generation (Rule-Based, No LLM)
 
