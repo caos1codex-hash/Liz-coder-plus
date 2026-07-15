@@ -1799,6 +1799,41 @@ packages/planner/
 ### 16.5 Compatibilidad
 
 - No modifica código de Sprint 1 ni Sprint 2.
-- Los 981 tests existentes siguen pasando.
+- Los 1105 tests existentes siguen pasando.
 - 168 tests nuevos añadidos en `tests/unit/test_planner_v31.py`.
 - Cobertura del paquete planner: > 99%.
+
+## 17. Sprint 3.2 — Planner Engine Core
+
+### 17.1 Resumen
+
+Sprint 3.2 transforma el planner pasivo de Sprint 3.1 en un sistema
+capaz de generar planes desde un objetivo en lenguaje natural.
+**No utiliza LLM** — la generación es basada en reglas heurísticas.
+
+Pipeline: ``Goal → TaskAnalyzer → PlanTemplate → PlanGenerator → TaskPlan``
+
+### 17.2 Nuevos módulos
+
+```
+packages/planner/
+    generator.py    # PlanGenerator (goal → TaskPlan)
+    analyzer.py     # TaskAnalyzer (type, complexity, agents)
+    complexity.py   # ComplexityEstimator (LOW/NORMAL/HIGH/CRITICAL)
+    rules.py        # PlannerRuleEngine (18 built-in rules)
+    templates.py    # 8 PlanTemplate subclasses
+    context.py      # PlanningContext (pipeline data bag)
+```
+
+### 17.3 API principal
+
+```python
+planner = TaskPlanner()
+plan = planner.create_from_goal("Crear una página web para una tienda")
+```
+
+### 17.4 Compatibilidad
+
+- No modifica código de Sprint 1, 2, ni 3.1.
+- 124 tests nuevos en `tests/unit/test_planner_v32.py`.
+- Total planner tests: 292. Total proyecto: 1105.

@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [0.9.0] — 2026-07-16 — Sprint 3.2 Planner Engine Core
+
+### Sprint 3.2 — Goal-to-Plan Generation (Rule-Based, No LLM)
+
+#### Added
+- **`packages/planner/generator.py`** — `PlanGenerator` converts a
+  natural-language goal into a validated `TaskPlan` via the pipeline:
+  Analyse → Template Selection → Step Generation → Dependency Wiring
+  → Validation.
+- **`packages/planner/analyzer.py`** — `TaskAnalyzer` analyses a goal
+  before generation: detects task type, estimates complexity, suggests
+  agents, and detects keywords.
+- **`packages/planner/complexity.py`** — `ComplexityEstimator`
+  classifies goals into LOW / NORMAL / HIGH / CRITICAL using heuristic
+  signals (length, action density, keyword presence, conjunction count).
+  Includes `ComplexityLevel` enum.
+- **`packages/planner/rules.py`** — `PlannerRuleEngine` with
+  `PlannerRule` dataclass.  18 built-in rules for agent detection
+  (frontend, backend, database, security, deploy, git, test, docs,
+  review, research) in English and Spanish.  3 hint rules for task
+  type (bugfix, research, documentation).  Supports priority ordering,
+  enable/disable, and stop-on-match.
+- **`packages/planner/templates.py`** — 8 `PlanTemplate` subclasses:
+  `DevelopmentTaskTemplate`, `BugFixTemplate`, `ResearchTemplate`,
+  `DocumentationTemplate`, `AnalysisTemplate`, `DevOpsTemplate`,
+  `TestingTemplate`, `GeneralTemplate` (fallback).  Each produces
+  context-aware step sequences with phases and agent assignments.
+- **`packages/planner/context.py`** — `PlanningContext` dataclass
+  carries goal, user, metadata, available agents, constraints,
+  preferences, and analysis results through the pipeline.
+- **`TaskPlanner.create_from_goal()`** — New method on the main
+  planner class.  One-liner API: `plan = planner.create_from_goal(goal)`.
+- **`PlanGenerator.add_step()`**, **`remove_step()`**,
+  **`optimize_order()`** — Step manipulation utilities.
+- **Tests**: 124 new tests in `tests/unit/test_planner_v32.py`
+  (14 test classes).  Total planner tests: 292.  Total project: 1105.
+- No LLM, no AI — pure rule-based generation, architecture ready for
+  future intelligent layers.
+
 ## [0.8.0] — 2026-07-16 — Sprint 3.1 Planner Architecture
 
 ### Sprint 3.1 — Intelligent Task Planning Engine (Infrastructure)

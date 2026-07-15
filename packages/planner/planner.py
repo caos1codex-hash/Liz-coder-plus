@@ -1,15 +1,18 @@
 """Task Planner — main entry point.
 
-Sprint 3.1 — Intelligent Task Planning Engine.
+Sprint 3.1 + 3.2 — Intelligent Task Planning Engine.
 
 :class:`TaskPlanner` orchestrates plan creation, validation, cloning,
 estimation, and (de)serialization by delegating to the respective
 sub-components (:class:`PlanValidator`, :class:`PlanSerializer`,
 :class:`PlannerMetrics`).
 
+As of Sprint 3.2 the planner can also **generate** plans from natural-
+language goals via :meth:`create_from_goal`, which delegates to
+:class:`PlanGenerator`.
+
 The planner **never** executes tasks — it only builds and manages plan
-structures, keeping the architecture clean and extensible for future
-AI-driven planning (Sprint 3.2+).
+structures.
 """
 
 from __future__ import annotations
@@ -201,3 +204,56 @@ class TaskPlanner(IPlanner):
         Delegates to :attr:`serializer`.
         """
         return self._serializer.deserialize(data, format=format)
+
+    # -- goal-based generation (Sprint 3.2) ------------------------------------
+
+    def create_from_goal(
+        self,
+        goal: str,
+        description: str = "",
+        priority: Any | None = None,
+        **context_kwargs: Any,
+    ) -> TaskPlan:
+        """Generate a complete plan from a natural-language goal.
+
+        This is the main entry point for Sprint 3.2's plan generation
+        pipeline.  It analyses the goal, selects a template, generates
+        steps, wires dependencies, and validates the result.
+
+        Args:
+            goal: The user-provided objective (e.g. "Crear API REST").
+            description: Optional elaborated description.
+            priority: Optional priority override. Auto-detected if not set.
+            **context_kwargs: Forwarded to :class:`PlanningContext`
+                (``user``, ``available_agents``, ``constraints``, etc.).
+
+        Returns:
+            A validated :class:`TaskPlan` ready for execution.
+
+        Example::
+
+            planner = TaskPlanner()
+            plan = planner.create_from_goal("Crear una página web para una tienda")
+            print(plan.steps[0].title)  # "Analizar requisitos"
+        """
+        from .generator import PlanGenerator
+
+        generator = PlanGenerator(
+            analyzer=self._get_or_create_analyzer(),
+            validator=self._validator if isinstance(self._validator, PlanValidator) else None,
+        )
+        plan = generator.generate(
+            goal=goal,
+            description=description,
+            priority=priority,
+            **context_kwargs,
+        )
+        return plan
+
+    def _get_or_create_analyzer(self):
+        """Lazy-create a :class:`TaskAnalyzer` if one doesn't exist."""
+        if not hasattr(self, "_analyzer"):
+            from .analyzer import TaskAnalyzer
+
+            self._analyzer = TaskAnalyzer()
+        return self._analyzer
