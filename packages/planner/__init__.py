@@ -1,6 +1,6 @@
 """Planner package — Intelligent Task Planning Engine.
 
-Sprint 3.1 + 3.2 + 3.3 — Liz Coder Plus v0.1.1.
+Sprint 3.1 + 3.2 + 3.3 + 3.4 — Liz Coder Plus v0.1.1.
 
 This package provides structural planning and rule-based plan generation.
 It creates, validates, serializes, and analyses execution plans
@@ -20,8 +20,31 @@ Sprint 3.3 additions:
     - Agent selector (scoring and ranking)
     - Agent assignment model
     - Integration with Sprint 2 AgentRegistry
+
+Sprint 3.4 additions:
+    - PlannerExecutor — bridges TaskPlan → Workflow → real agent
+      execution via the existing WorkflowEngine + RegistryAwareScheduler.
+    - Planner-level event names (``planner.plan.*`` / ``planner.step.*``)
+      published on the workflow EventBus.
+    - PlanExecutionResult dataclass summarising a run.
+    - Optional plan persistence via the memory package's PlanRepository
+      (see ``packages/memory/src/memory/repositories/plan_repository.py``).
 """
 
+# -- Sprint 3.4 new modules -------------------------------------------------
+from .executor import PlanExecutionResult, PlannerExecutor
+from .executor_events import (
+    ALL_EVENTS,
+    PLAN_CANCELLED,
+    PLAN_COMPLETED,
+    PLAN_FAILED,
+    PLAN_STARTED,
+    PLAN_SUBMITTED,
+    PLAN_TRANSLATED,
+    STEP_FINISHED,
+    STEP_STARTED,
+    STEP_TRANSLATED,
+)
 # -- Sprint 3.3 new modules -------------------------------------------------
 from .agent_context import AgentInfo, AgentPlanningContext
 from .agent_selector import AgentSelector
@@ -120,4 +143,18 @@ __all__ = [
     "AgentSelector",
     "AgentAssignment",
     "AgentAwarePlanner",
+    # Sprint 3.4 implementations
+    "PlannerExecutor",
+    "PlanExecutionResult",
+    # Sprint 3.4 event constants
+    "PLAN_SUBMITTED",
+    "PLAN_TRANSLATED",
+    "PLAN_STARTED",
+    "PLAN_COMPLETED",
+    "PLAN_FAILED",
+    "PLAN_CANCELLED",
+    "STEP_TRANSLATED",
+    "STEP_STARTED",
+    "STEP_FINISHED",
+    "ALL_EVENTS",
 ]

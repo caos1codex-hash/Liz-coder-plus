@@ -57,6 +57,8 @@ class MemoryManager:
         self._task_repo: Any | None = None
         self._workflow_repo: Any | None = None
         self._execution_repo: Any | None = None
+        # Sprint 3.4 — planner persistence.
+        self._plan_repo: Any | None = None
 
         logger.info("MemoryManager created (max_history=%d)", max_history)
 
@@ -121,6 +123,16 @@ class MemoryManager:
         """ExecutionRepository, available after ``initialize_task_persistence()``."""
         return self._execution_repo
 
+    @property
+    def plan_repository(self) -> Any | None:
+        """PlanRepository, available after ``initialize_plan_persistence()``.
+
+        Sprint 3.4 — exposes the planner persistence layer (plans +
+        plan_steps tables) for the PlannerExecutor to save and replay
+        plans across restarts.
+        """
+        return self._plan_repo
+
     async def initialize_task_persistence(self) -> None:
         """Run the sprint 1.8 tasks/workflows migration and create repos.
 
@@ -152,6 +164,31 @@ class MemoryManager:
 
         logger.info("Task/workflow persistence initialized")
 
+    async def initialize_plan_persistence(self) -> None:
+        """Run the Sprint 3.4 plans migration and create the PlanRepository.
+
+        Must be called after ``initialize()`` (and ideally after
+        ``initialize_task_persistence()`` so the execution_history
+        table is also available — they are joined at query time by the
+        PlannerExecutor).
+
+        Safe to call multiple times; subsequent calls are no-ops.
+        """
+        if self._db is None:
+            raise RuntimeError(
+                "MemoryManager not initialized — call initialize() first"
+            )
+        if self._plan_repo is not None:
+            logger.debug("Plan persistence already initialized")
+            return
+
+        await self._db.run_migration("sprint_3_4_plans.sql")
+
+        from src.memory.repositories.plan_repository import PlanRepository
+
+        self._plan_repo = PlanRepository(self._db)
+        logger.info("Plan persistence initialized (Sprint 3.4)")
+
     async def close(self) -> None:
         """Release all resources.
 
@@ -166,6 +203,7 @@ class MemoryManager:
         self._task_repo = None
         self._workflow_repo = None
         self._execution_repo = None
+        self._plan_repo = None
 
         if self._db is not None:
             await self._db.close()
