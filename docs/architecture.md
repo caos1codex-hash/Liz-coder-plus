@@ -24,12 +24,12 @@ backend; el desktop es una capa fina de presentación.
                                       │    (Core)      │
                                       └────────┬───────┘
                                                │
-                       ┌───────────────┬───────┴────────┬───────────────┐
-                       ▼               ▼                ▼               ▼
-                 ┌──────────┐    ┌──────────┐     ┌──────────┐    ┌──────────┐
-                 │  Agents  │    │  Memory  │     │  Tools   │    │  Shared  │
-                 │          │    │ (SQLite) │     │          │    │  Types   │
-                 └──────────┘    └──────────┘     └──────────┘    └──────────┘
+                       ┌───────────────┬───────┴────────┬───────────────┬───────────────┐
+                       ▼               ▼                ▼               ▼               ▼
+                 ┌──────────┐    ┌──────────┐     ┌──────────┐    ┌──────────┐    ┌──────────┐
+                 │  Agents  │    │  Memory  │     │  Tools   │    │  Shared  │    │ Planner  │
+                 │          │    │ (SQLite) │     │          │    │  Types   │    │          │
+                 └──────────┘    └──────────┘     └──────────┘    └──────────┘    └──────────┘
 ```
 
 ## 2. Capas
@@ -1752,3 +1752,53 @@ Métodos nuevos: `register_simple`, `register_with_manifest`, `list_agents`,
 - `WorkflowOrchestrator` y `WorkflowEngine` (Sprint 2.2) coexisten.
 - Los 334 tests de Sprint 2.1+2.2 siguen pasando.
 - 100 tests nuevos añadidos en `tests/agents/`.
+
+## 16. Sprint 3.1 — Planner Architecture
+
+### 16.1 Resumen
+
+Nuevo paquete `packages/planner/` que proporciona la infraestructura
+completa para la creación, validación, serialización y análisis de planes
+de ejecución. **No** ejecuta tareas ni utiliza IA/LLM — construye
+únicamente estructuras de planificación.
+
+### 16.2 Estructura del paquete
+
+```
+packages/planner/
+    __init__.py      # Public API (__all__)
+    planner.py       # TaskPlanner (main entry point)
+    models.py        # TaskPlan, PlanStep, PlanMetrics
+    enums.py         # PlanStatus, StepStatus, Priority
+    interfaces.py    # IPlanner, IValidator, ISerializer, IMetrics
+    validator.py     # PlanValidator (DFS cycle detection)
+    serializer.py    # PlanSerializer (dict / JSON / YAML)
+    metrics.py       # PlannerMetrics (depth, complexity, critical path)
+    exceptions.py    # 7 exception classes
+    tests/
+        __init__.py
+```
+
+### 16.3 Modelos principales
+
+| Modelo | Descripción |
+|--------|-------------|
+| `TaskPlan` | Plan completo con ID, goal, steps, priority, status, timestamps |
+| `PlanStep` | Paso individual con dependencies, required_agents, estimated_duration |
+| `PlanMetrics` | Métricas computadas: total_steps, sequential/parallel, planning_time |
+
+### 16.4 Interfaces (ABC)
+
+| Interface | Método principal |
+|-----------|-----------------|
+| `IPlanner` | `create_plan()`, `clone()` |
+| `IValidator` | `validate(plan) -> list[str]` |
+| `ISerializer` | `serialize()`, `deserialize()` |
+| `IMetrics` | `compute(plan) -> PlanMetrics` |
+
+### 16.5 Compatibilidad
+
+- No modifica código de Sprint 1 ni Sprint 2.
+- Los 981 tests existentes siguen pasando.
+- 168 tests nuevos añadidos en `tests/unit/test_planner_v31.py`.
+- Cobertura del paquete planner: > 99%.

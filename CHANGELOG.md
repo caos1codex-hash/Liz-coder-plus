@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented here.
 
+## [0.8.0] — 2026-07-16 — Sprint 3.1 Planner Architecture
+
+### Sprint 3.1 — Intelligent Task Planning Engine (Infrastructure)
+
+#### Added
+- **`packages/planner/`** — New package for plan creation, validation,
+  serialization, and metrics. The planner builds execution plan structures
+  without performing any actual task execution.
+- **Models**: `TaskPlan`, `PlanStep`, `PlanMetrics` — dataclass-based with
+  `to_dict()` / `from_dict()` serialization.
+- **Enums**: `PlanStatus` (7 states), `StepStatus` (6 states), `Priority`
+  (4 levels) — all with transition-map validation.
+- **Exceptions**: `PlannerException`, `PlanValidationError`,
+  `SerializationError`, `DependencyError`, `CircularDependencyError`,
+  `DuplicateStepError`, `InvalidStatusError`.
+- **Interfaces**: `IPlanner`, `IValidator`, `ISerializer`, `IMetrics` —
+  ABC-based contracts for all planner capabilities.
+- **`PlanValidator`**: validates unique IDs, existing dependencies,
+  cycle detection (DFS 3-colour), metadata types, and status transitions.
+- **`PlanSerializer`**: supports dict, JSON, and YAML (optional PyYAML)
+  serialization and deserialization.
+- **`PlannerMetrics`**: computes step counts, dependency depth, complexity
+  score, critical path, and ready-step detection.
+- **`TaskPlanner`**: main entry point with `create_plan()`, `clone()`,
+  `validate()`, `estimate()`, `serialize()`, `deserialize()`. Composable
+  via dependency injection of I* interfaces.
+- **Tests**: 168 unit tests (14 test classes) covering all modules.
+  Source coverage > 99%.
+- **Documentation**: `docs/sprint-3.1-planner-architecture-report.md`
+  with 5 Mermaid diagrams (class, sequence, 2 state, component).
+
+#### Design Decisions
+- Plain `@dataclass` with manual serialization (matches existing codebase).
+- `abc.ABC` for planner interfaces (stricter than `typing.Protocol`).
+- No LLM/AI in this sprint — pure structural planning only.
+- Composition-over-inheritance in `TaskPlanner`.
+
 ## [0.7.0] — 2026-07-14 — Sprint 2.3 estable
 
 ### Sprint 2.3 — Agent Lifecycle & Registry Integration
