@@ -2,6 +2,90 @@
 
 All notable changes to this project are documented here.
 
+## [0.11.0] — 2026-07-16 — Sprint 3.5 Advanced Planner
+
+### Sprint 3.5 — Advanced Task Decomposition, Dependency Graph, Execution Strategy, Planner Memory
+
+#### Added
+- **`packages/planner/decomposer.py`** — `TaskDecomposer` converts a
+  high-level goal into structured subtask hierarchies (main objective →
+  subtasks → required capabilities → expected outputs → dependencies)
+  using rule-based heuristics. Supports four decomposition strategies:
+  compound-sequential, research-implement-report, multi-component-parallel,
+  and CRUD-pattern. Falls back to a single-step plan when no strategy
+  matches.
+- **`packages/planner/dependency_graph.py`** — `DependencyGraph` provides
+  a directed-graph view over a `TaskPlan` with cycle detection (DFS
+  3-colour), topological ordering (Kahn's algorithm with priority
+  tiebreak), parallel-batch computation (layered BFS), critical-path
+  analysis (topological DP), ancestor/descendant queries, and
+  ready/blocked step queries.
+- **`packages/planner/strategy.py`** — `ExecutionStrategyEngine`
+  decides per-step execution mode (sequential / parallel / retry /
+  escalate / human-confirm) based on capability requirements, graph
+  position, past failures, and capability safety rules.
+  `FailureRecoveryEngine` produces recovery plans (retry → escalate →
+  fail_plan) when steps fail.
+- **`packages/planner/strategy_enums.py`** — `ExecutionMode`,
+  `FailureDecision`, `CapabilityRequestStatus` enums.
+- **`packages/planner/planner_memory.py`** — `PlannerMemory` stores
+  successful planning patterns and retrieves similar past workflows
+  via Jaccard similarity on tokenised goals. Includes
+  `InMemoryPatternStore` (default, no IO) and
+  `MemoryBackedPatternStore` (wraps `MemoryManager` for SQLite
+  persistence).
+- **`packages/planner/planner_agent_bridge.py`** — `PlannerAgentBridge`
+  validates plan capabilities against the live agent context, raises
+  dynamic `CapabilityRequest`s for missing capabilities, and suggests
+  escalation agents on failure. `CapabilityRequestBroker` tracks
+  pending requests and fulfills them when new agents are registered.
+- **`packages/planner/exceptions.py`** — 5 new exception classes:
+  `DecompositionError`, `StrategyError`, `GraphError`,
+  `PlanningMemoryError`, `EscalationError`.
+- **`tests/unit/test_planner_v35.py`** — 80 new tests covering all
+  Sprint 3.5 modules + 4 end-to-end integration tests.
+- **`docs/sprint-3.5-advanced-planner-report.md`** — comprehensive
+  Sprint 3.5 report with architecture diagrams, usage examples, and
+  test results.
+
+#### Modified
+- **`packages/planner/__init__.py`** — Exports 35 new public symbols
+  from Sprint 3.5 modules; updates package docstring.
+- **`packages/planner/exceptions.py`** — Adds Sprint 3.5 exception
+  hierarchy.
+
+#### Test Results
+- **539 planner tests pass** (459 existing + 80 new).
+- **1262 unit tests pass** overall (up from 1182 in Sprint 3.4).
+- The 32 pre-existing failures (permission_levels, recovery, scheduler,
+  workflows) are unchanged — they are unrelated to the planner package
+  and were present before Sprint 3.5.
+
+#### Architecture
+- All new modules are **additive** — no existing public API was renamed
+  or removed.
+- The planner **never imports concrete agents** — it only knows about
+  capabilities and the duck-typed `AgentPlanningContext`.
+- The planner **never executes tasks** — execution remains the
+  responsibility of `PlannerExecutor` (Sprint 3.4).
+- New modules are **decoupled** from the multiagent package and from
+  the concrete persistence layer (duck-typed `PatternStore` Protocol).
+
+## [0.10.0] — 2026-07-16 — Sprint 3.4 PlannerExecutor
+
+### Sprint 3.4 — Planner → Orchestrator → Agents bridge
+
+#### Added
+- **`packages/planner/executor.py`** — `PlannerExecutor` bridges a
+  `TaskPlan` into a runnable multi-agent workflow via the existing
+  `WorkflowEngine` + `RegistryAwareScheduler`.
+- **`packages/planner/executor_events.py`** — Planner-level event
+  names (`planner.plan.*` / `planner.step.*`).
+- **`packages/memory/src/memory/repositories/plan_repository.py`** —
+  SQLite persistence for `TaskPlan` / `PlanStep`.
+- **`packages/memory/src/memory/migrations/sprint_3_4_plans.sql`** —
+  Schema for `plans` and `plan_steps` tables.
+
 ## [0.9.0] — 2026-07-16 — Sprint 3.3 Agent-Aware Planning Integration
 
 ### Sprint 3.3 — Agent-Aware Planning Integration

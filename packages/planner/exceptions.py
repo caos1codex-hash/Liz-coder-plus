@@ -2,6 +2,8 @@
 
 Sprint 3.1 — Intelligent Task Planning Engine.
 Sprint 3.3 — Agent-Aware Planning (new: AgentPlanningError branch).
+Sprint 3.5 — Advanced Planner (new: DecompositionError, StrategyError,
+            GraphError, PlanningMemoryError).
 
 Provides a hierarchy of exception classes so that callers can catch
 broad categories (:class:`PlannerException`) or narrow ones
@@ -142,4 +144,92 @@ class AssignmentError(AgentPlanningError):
         self.reason = reason
         super().__init__(
             f"Cannot assign agent '{agent_id}' to step '{step_id}': {reason}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 3.5 — Advanced Planner exceptions
+# ---------------------------------------------------------------------------
+
+
+class DecompositionError(PlannerException):
+    """Raised when a goal cannot be decomposed into subtasks.
+
+    Attributes:
+        goal: The original goal that failed decomposition.
+        reason: Human-readable explanation.
+    """
+
+    def __init__(self, goal: str, reason: str) -> None:
+        self.goal = goal
+        self.reason = reason
+        super().__init__(f"Cannot decompose goal '{goal}': {reason}")
+
+
+class StrategyError(PlannerException):
+    """Raised when an execution strategy cannot be applied.
+
+    Attributes:
+        reason: Human-readable explanation.
+        step_id: Optional step ID that triggered the failure.
+    """
+
+    def __init__(self, reason: str, step_id: str | None = None) -> None:
+        self.reason = reason
+        self.step_id = step_id
+        msg = f"Execution strategy error: {reason}"
+        if step_id:
+            msg += f" (step: {step_id})"
+        super().__init__(msg)
+
+
+class GraphError(PlannerException):
+    """Raised when the dependency graph is structurally invalid.
+
+    Distinct from :class:`CircularDependencyError` (which is a specific
+    kind of graph error): ``GraphError`` covers cases such as missing
+    nodes, duplicate edges, or attempts to mutate a frozen graph.
+
+    Attributes:
+        reason: Human-readable explanation.
+        node_id: Optional node ID that triggered the failure.
+    """
+
+    def __init__(self, reason: str, node_id: str | None = None) -> None:
+        self.reason = reason
+        self.node_id = node_id
+        msg = f"Dependency graph error: {reason}"
+        if node_id:
+            msg += f" (node: {node_id})"
+        super().__init__(msg)
+
+
+class PlanningMemoryError(PlannerException):
+    """Raised when planner memory operations fail.
+
+    Attributes:
+        operation: The memory operation that failed (e.g. ``"store"``,
+            ``"retrieve"``, ``"match"``).
+        reason: Human-readable explanation.
+    """
+
+    def __init__(self, operation: str, reason: str) -> None:
+        self.operation = operation
+        self.reason = reason
+        super().__init__(f"Planning memory '{operation}' failed: {reason}")
+
+
+class EscalationError(PlannerException):
+    """Raised when an escalation path cannot be satisfied.
+
+    Attributes:
+        step_id: The step whose failure triggered the escalation.
+        reason: Why the escalation could not be applied.
+    """
+
+    def __init__(self, step_id: str, reason: str) -> None:
+        self.step_id = step_id
+        self.reason = reason
+        super().__init__(
+            f"Cannot escalate failure for step '{step_id}': {reason}"
         )

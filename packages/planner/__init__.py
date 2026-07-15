@@ -1,6 +1,6 @@
 """Planner package — Intelligent Task Planning Engine.
 
-Sprint 3.1 + 3.2 + 3.3 + 3.4 — Liz Coder Plus v0.1.1.
+Sprint 3.1 + 3.2 + 3.3 + 3.4 + 3.5 — Liz Coder Plus v0.1.1.
 
 This package provides structural planning and rule-based plan generation.
 It creates, validates, serializes, and analyses execution plans
@@ -29,8 +29,51 @@ Sprint 3.4 additions:
     - PlanExecutionResult dataclass summarising a run.
     - Optional plan persistence via the memory package's PlanRepository
       (see ``packages/memory/src/memory/repositories/plan_repository.py``).
+
+Sprint 3.5 additions:
+    - Advanced task decomposition via :class:`TaskDecomposer`.
+    - Dependency graph system via :class:`DependencyGraph`
+      (topological order, parallel batches, critical path).
+    - Execution strategy layer via :class:`ExecutionStrategyEngine`
+      and :class:`FailureRecoveryEngine`.
+    - Planner memory integration via :class:`PlannerMemory` and
+      :class:`PlanningPattern`.
+    - Planner-agent intelligence bridge via :class:`PlannerAgentBridge`
+      and :class:`CapabilityRequestBroker`.
 """
 
+# -- Sprint 3.5 new modules -------------------------------------------------
+from .decomposer import DecompositionResult, TaskDecomposer
+from .dependency_graph import (
+    CriticalPath,
+    DependencyGraph,
+    GraphValidationResult,
+    ParallelBatch,
+)
+from .planner_agent_bridge import (
+    CapabilityRequest,
+    CapabilityRequestBroker,
+    PlannerAgentBridge,
+)
+from .planner_memory import (
+    InMemoryPatternStore,
+    MemoryBackedPatternStore,
+    PatternStore,
+    PlannerMemory,
+    PlanningPattern,
+)
+from .strategy import (
+    ExecutionDecision,
+    ExecutionStrategyEngine,
+    FailureRecoveryEngine,
+    FailureRecoveryPlan,
+    PlanExecutionStrategy,
+)
+from .strategy_enums import (
+    CapabilityRequestStatus,
+    ExecutionMode,
+    FailureDecision,
+)
 # -- Sprint 3.4 new modules -------------------------------------------------
 from .executor import PlanExecutionResult, PlannerExecutor
 from .executor_events import (
@@ -60,10 +103,11 @@ from .enums import (PlanStatus, Priority, StepStatus, can_transition_plan,
 # -- exceptions -------------------------------------------------------------
 from .exceptions import (AgentNotFoundError, AgentPlanningError,
                          AssignmentError, CapabilityMissingError,
-                         CircularDependencyError, DependencyError,
-                         DuplicateStepError, InvalidStatusError,
+                         CircularDependencyError, DecompositionError,
+                         DependencyError, DuplicateStepError, EscalationError,
+                         GraphError, InvalidStatusError, PlanningMemoryError,
                          PlannerException, PlanValidationError,
-                         SerializationError)
+                         SerializationError, StrategyError)
 from .generator import PlanGenerator
 from .integration import AgentAwarePlanner
 # -- interfaces -------------------------------------------------------------
@@ -94,6 +138,10 @@ __all__ = [
     "can_transition_plan",
     "can_transition_step",
     "ComplexityLevel",
+    # Sprint 3.5 enums
+    "ExecutionMode",
+    "FailureDecision",
+    "CapabilityRequestStatus",
     # exceptions
     "PlannerException",
     "PlanValidationError",
@@ -107,6 +155,12 @@ __all__ = [
     "AgentNotFoundError",
     "CapabilityMissingError",
     "AssignmentError",
+    # Sprint 3.5 exceptions
+    "DecompositionError",
+    "StrategyError",
+    "GraphError",
+    "PlanningMemoryError",
+    "EscalationError",
     # interfaces
     "IPlanner",
     "IValidator",
@@ -157,4 +211,24 @@ __all__ = [
     "STEP_STARTED",
     "STEP_FINISHED",
     "ALL_EVENTS",
+    # Sprint 3.5 implementations
+    "TaskDecomposer",
+    "DecompositionResult",
+    "DependencyGraph",
+    "ParallelBatch",
+    "CriticalPath",
+    "GraphValidationResult",
+    "ExecutionStrategyEngine",
+    "PlanExecutionStrategy",
+    "ExecutionDecision",
+    "FailureRecoveryEngine",
+    "FailureRecoveryPlan",
+    "PlannerMemory",
+    "PlanningPattern",
+    "PatternStore",
+    "InMemoryPatternStore",
+    "MemoryBackedPatternStore",
+    "CapabilityRequest",
+    "CapabilityRequestBroker",
+    "PlannerAgentBridge",
 ]
