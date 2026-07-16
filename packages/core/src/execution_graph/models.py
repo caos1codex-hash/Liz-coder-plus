@@ -172,7 +172,6 @@ class ExecutionNode:
                 f"ExecutionNode '{self.name}' cannot transition from "
                 f"{self.state.value} to {new_state.value}"
             )
-        old = self.state
         self.state = new_state
 
         if new_state == ExecutionNodeState.RUNNING and self.started_at is None:

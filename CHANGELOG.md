@@ -2,6 +2,74 @@
 
 All notable changes to this project are documented here.
 
+## [0.9.0] — 2026-07-16 — Sprint 3.10
+
+### Sprint 3.10 — Finalización, Auditoría y Release
+
+#### Resumen Técnico
+Auditoría completa del Sprint 3 (módulos 3.1–3.9). Sin nuevas funcionalidades.
+Todas las correcciones son incrementales y mantienen compatibilidad total.
+
+#### Módulos Auditados (Sprint 3)
+- `packages/core/src/planner.py` — Planner heurístico (Sprint 3.1)
+- `packages/core/src/plan_models.py` — Modelos de estado del plan (Sprint 3.6)
+- `packages/core/src/plan_executor.py` — Ejecutor de planes (Sprint 3.6)
+- `packages/core/src/plan_tracking.py` — Seguimiento de ejecución (Sprint 3.7)
+- `packages/core/src/pipeline.py` — Pipeline unificado (Sprint 3.6 + 3.9)
+- `packages/core/src/execution_graph/` — Grafo de ejecución paralela (Sprint 3.8)
+  - `models.py`, `dependency_graph.py`, `topological_sort.py`, `scheduler.py`,
+    `ready_queue.py`, `parallel_executor.py`, `state_machine.py`, `retry_policy.py`, `recovery.py`
+- `packages/core/src/context_engine/` — Context Engineering (Sprint 3.9)
+  - `models.py`, `context_engine.py`, `context_builder.py`, `context_cache.py`,
+    `context_budget.py`, `context_ranker.py`, `file_selector.py`, `memory_selector.py`,
+    `history_selector.py`, `task_decomposer.py`, `subtask_generator.py`
+
+#### Bugs Corregidos
+- **`dependency_graph.remove_node`**: bug use-after-free — accedía a `self.edges[name]` después de `pop()`. Ahora guarda las dependencias antes de eliminar.
+- **`pipeline.stage_plan_execution`**: el resultado del plan era sobrescrito por las etapas posteriores de selección y ejecución de agente. Ahora las etapas se saltan cuando el plan ya produjo respuesta.
+- **`execution_graph/recovery.py`**: variable `nd` indefinida en `save_checkpoint` (error en tiempo de ejecución).
+- **`execution_graph/recovery.py`**: `partial_replan` usaba `asyncio.get_event_loop().run_until_complete()` deprecado. Reemplazado por `asyncio.get_running_loop()` / `asyncio.run()`.
+- **`execution_graph/recovery.py`**: `_retry_node` no limpiaba `completed_at` al resetear un nodo fallido.
+- **`execution_graph/recovery.py`**: docstring de `partial_replan` con indentación incorrecta.
+- **`context_engine/memory_selector.py` y `history_selector.py`**: `_parse_timestamp` llamaba a `fromisoformat()` 4 veces en un bucle inútil.
+
+#### Optimización
+- Eliminado código muerto: `_matches_any()` en `planner.py`, `levels` en `critical_path()`, `old` en `plan_tracking.resume_plan()`.
+- Eliminados 12+ imports no utilizados en `dependency_graph.py`, `scheduler.py`, `retry_policy.py`, `ready_queue.py`, `recovery.py`, `plan_executor.py`, `plan_tracking.py`, `context_engine.py`.
+- Movidos 5+ imports inline (`import time`, `import math`) al nivel superior del módulo en `file_selector.py`, `memory_selector.py`.
+- `topological_sort.topological_levels()` ahora delega a `DependencyGraph.topological_levels()`, eliminando duplicación de lógica.
+- Simplificada lógica confusa en `DependencyGraph.is_ready()`.
+- Eliminado `_dedup_cache` no utilizado en `ContextCompressor`.
+- Eliminado bloque `if TYPE_CHECKING: pass` vacío en `context_engine.py` y `scheduler.py`.
+
+#### Tipado
+- Todos los módulos Sprint 3 pasan ruff sin advertencias.
+- Imports TYPE_CHECKING limpiados y verificados.
+
+#### Documentación Nueva
+- `docs/planner.md` — Documentación completa del sistema de planificación.
+- `docs/context_engine.md` — Documentación del Context Engineering Engine.
+- `docs/execution_graph.md` — Documentación del Execution Graph.
+- `docs/planning_pipeline.md` — Documentación de integración del pipeline completo.
+
+#### Exportaciones Públicas
+- `packages/core/src/__init__.py` ahora exporta todos los módulos Sprint 3:
+  `plan_models`, `plan_executor`, `plan_tracking`, y 38 nuevos eventos
+  (PLAN_*, TRACKING_*, EXEC_GRAPH_*, CONTEXT_*).
+
+#### Pruebas
+- 805 tests passed (incluyendo 486 tests Sprint 3).
+- Cobertura existente: execution_graph (1754 líneas), context_engine (1490 líneas),
+  plan_executor (665 líneas), plan_tracking (1126 líneas).
+- Ruff: 0 errores en todos los módulos Sprint 3.
+
+#### Problemas Pendientes
+- `plan_tracking.py`: 7 usos de `asyncio.get_event_loop()` (deprecado) en handlers de eventos — no corregido para no alterar comportamiento async existente.
+- `parallel_executor.py`: `default_timeout` en config existe pero no se aplica wrapping con `asyncio.wait_for()` — marcado como enhancement futuro.
+- `plan_executor.py`: `enable_parallel` y `max_parallel_tasks` en config son configuración muerta — la ejecución paralela via Execution Graph es la vía preferida.
+- `plan_tracking.py`: algunos event handlers establecen estado directamente sin validar la máquina de estados — decisión intencional para eventos del sistema.
+- `context_budget.py`: deduplicación usa `hash()` que no es determinista entre procesos — aceptable para cache en-memoria.
+
 ## [0.8.0] — 2026-07-16 — Sprint 3.7
 
 ### Sprint 3.7 — Plan Execution Tracking

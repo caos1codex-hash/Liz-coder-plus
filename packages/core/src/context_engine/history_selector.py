@@ -81,16 +81,10 @@ def _parse_timestamp(ts: Any) -> datetime | None:
     if isinstance(ts, datetime):
         return ts
     if isinstance(ts, str):
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-        ):
-            try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                continue
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            pass
     return None
 
 

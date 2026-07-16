@@ -91,8 +91,8 @@ def topological_levels(graph: DependencyGraph) -> dict[str, int]:
     Level 0 = root nodes (no dependencies).
     Level N = max(parent levels) + 1.
 
-    This is useful for determining which nodes can run in parallel:
-    all nodes at the same level are independent of each other.
+    Delegates to ``DependencyGraph.topological_levels`` to avoid
+    code duplication.
 
     Args:
         graph: The DependencyGraph.
@@ -100,18 +100,7 @@ def topological_levels(graph: DependencyGraph) -> dict[str, int]:
     Returns:
         Dict mapping node name to its topological level.
     """
-    order = kahn_sort(graph)
-    levels: dict[str, int] = {}
-
-    for node in order:
-        parents = graph.edges.get(node, set())
-        if not parents:
-            levels[node] = 0
-        else:
-            parent_levels = [levels[p] for p in parents if p in levels]
-            levels[node] = (max(parent_levels) + 1) if parent_levels else 0
-
-    return levels
+    return graph.topological_levels()
 
 
 __all__ = ["kahn_sort", "topological_levels"]

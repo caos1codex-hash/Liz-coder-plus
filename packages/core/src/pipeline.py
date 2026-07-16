@@ -297,6 +297,9 @@ async def stage_select_agent(
     orch: "Orchestrator", req: PipelineRequest
 ) -> PipelineRequest:
     """Select the agent that will handle the message."""
+    # Skip agent selection if plan execution already produced a response.
+    if req.metadata.get("plan_execution_completed"):
+        return req
     agent = await orch.router.route(req.message, req.context)
     req.agent = agent
     req.agent_name = agent.name
@@ -336,6 +339,9 @@ async def stage_execute_agent(
     orch: "Orchestrator", req: PipelineRequest
 ) -> PipelineRequest:
     """Execute the selected agent with timeout."""
+    # Skip agent execution if plan execution already produced a response.
+    if req.metadata.get("plan_execution_completed"):
+        return req
     assert req.agent is not None, "agent must be selected before execute"
 
     start = time.monotonic()

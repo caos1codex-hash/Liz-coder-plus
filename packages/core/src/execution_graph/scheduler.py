@@ -10,16 +10,11 @@ between the DAG topology and the execution state.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from .dependency_graph import DependencyGraph
-from .models import ExecutionNode, ExecutionNodeState
 from .ready_queue import ReadyQueue
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

@@ -35,7 +35,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -60,13 +59,10 @@ from src.events import (
     TRACKING_PLAN_PLANNING,
     TRACKING_PLAN_RESUMED,
     TRACKING_PLAN_RUNNING_STEP,
-    TRACKING_SNAPSHOT_SAVED,
     TRACKING_STEP_PROGRESS,
 )
 from src.plan_models import (
     ExecutablePlan,
-    PlanState,
-    PlanTask,
     PlanTaskStatus,
 )
 
@@ -726,7 +722,6 @@ class PlanExecutionTracker:
         if entry.tracking_state != TrackingState.PAUSED:
             return None
 
-        old = entry.tracking_state
         entry.tracking_state = TrackingState.EXECUTING
         entry.updated_at = _now_iso()
         entry.paused_duration = (

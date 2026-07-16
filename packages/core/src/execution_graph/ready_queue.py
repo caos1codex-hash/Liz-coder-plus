@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import heapq
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .models import ExecutionNode
+    pass
 
 logger = logging.getLogger(__name__)
 

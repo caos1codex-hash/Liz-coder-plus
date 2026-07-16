@@ -21,6 +21,7 @@ Example::
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -132,16 +133,10 @@ def _parse_timestamp(ts: Any) -> datetime | None:
     if isinstance(ts, datetime):
         return ts
     if isinstance(ts, str):
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-        ):
-            try:
-                return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                continue
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            pass
     return None
 
 
@@ -325,8 +320,6 @@ class MemorySelector:
         if age_seconds < 0:
             return 0.0
         # Exponential decay: 1.0 at 0s, ~0.5 at 3600s, ~0.1 at 86400s.
-        import math
-
         return max(0.0, math.exp(-age_seconds / 7200.0))
 
 

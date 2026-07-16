@@ -207,7 +207,7 @@ class ContextCompressor:
     """
 
     def __init__(self) -> None:
-        self._dedup_cache: dict[str, str] = {}
+        pass
 
     def compress_context(
         self, context: RankedContext, target_tokens: int

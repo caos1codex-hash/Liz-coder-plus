@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from src.events import (
@@ -55,9 +55,7 @@ from src.plan_models import (
     PlanState,
     PlanTask,
     PlanTaskStatus,
-    can_transition_plan_task,
 )
-from src.recovery import ResilienceHelper
 
 if TYPE_CHECKING:
     from src.event_bus import EventBus

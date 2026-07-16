@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.3.0`
-**Estado:** Sprint 1.10 — Hardening, Optimización, Validación Final y Cierre del Sprint 1
+**Versión:** `v0.9.0`
+**Estado:** Sprint 3.10 — Finalización, Auditoría y Release del Sistema de Planificación
 
 ---
 

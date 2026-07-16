@@ -14,7 +14,6 @@ existing Planner's ``SubTask.depends_on`` string-based references).
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -83,15 +82,14 @@ class DependencyGraph:
     def remove_node(self, name: str) -> None:
         """Remove a node and all edges to/from it."""
         self.nodes.discard(name)
-        self.edges.pop(name, None)
+        old_deps = self.edges.pop(name, None) or set()
         self.priorities.pop(name, None)
         # Remove from dependents of its dependencies.
-        for dep in self.edges.get(name, set()):
+        for dep in old_deps:
             self.dependents.get(dep, set()).discard(name)
         # Remove from edges of dependents.
-        for dependent in self.dependents.get(name, set()):
+        for dependent in self.dependents.pop(name, None) or set():
             self.edges.get(dependent, set()).discard(name)
-        self.dependents.pop(name, None)
 
     def add_dependency(self, node: str, depends_on: str) -> None:
         """Add a dependency edge: node depends on depends_on."""
@@ -139,7 +137,7 @@ class DependencyGraph:
     def is_ready(self, node: str, completed: set[str]) -> bool:
         """Return True if all dependencies of *node* are completed."""
         deps = self.edges.get(node, set())
-        return bool(deps) and all(d in completed for d in deps) if deps else not deps
+        return all(d in completed for d in deps)
 
     def remaining_dependencies(self, node: str, completed: set[str]) -> set[str]:
         """Return dependencies of *node* that are not yet completed."""
@@ -301,7 +299,6 @@ class DependencyGraph:
             List of node names forming the critical path.
         """
         durations = durations or {}
-        levels = self.topological_levels()
         order = self.topological_order()
 
         # Earliest completion time for each node.

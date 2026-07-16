@@ -19,7 +19,9 @@ Example::
 from __future__ import annotations
 
 import logging
+import math
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -238,8 +240,6 @@ class FileSelector:
             scored = scored[: self._max_files]
 
         # Update access tracking for recency/frequency.
-        import time
-
         now = time.monotonic()
         for fs in scored:
             self._file_access_count[fs.path] = (
@@ -257,8 +257,6 @@ class FileSelector:
 
     def record_access(self, path: str) -> None:
         """Manually record that a file was accessed (for recency/frequency)."""
-        import time
-
         self._file_access_count[path] = self._file_access_count.get(path, 0) + 1
         self._file_last_access[path] = time.monotonic()
 
@@ -387,12 +385,8 @@ class FileSelector:
         last = self._file_last_access.get(path)
         if last is None:
             return 0.0
-        import time
-
         age = time.monotonic() - last
         # Decay: 1.0 at 0s, ~0.5 at 60s, ~0.1 at 300s.
-        import math
-
         return max(0.0, math.exp(-age / 120.0))
 
     def _frequency_score(self, path: str) -> float:

@@ -18,7 +18,7 @@ from .dependency_graph import DependencyGraph
 from .models import ExecutionNode, ExecutionNodeState
 
 if TYPE_CHECKING:
-    from .parallel_executor import ParallelExecutor
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ class RecoveryManager:
                 if n in completed and nd.result is not None
             },
             node_errors={
-                n: nd.error for n in failed
+                n: self._nodes[n].error for n in failed
                 if self._nodes[n].error is not None
             },
             node_retries={
@@ -383,19 +383,19 @@ class RecoveryManager:
     ) -> dict[str, Any]:
         """Replan only the affected subgraph after a failure.
 
-    When a task fails, this does NOT regenerate the entire plan.
-    Instead, it identifies the affected subgraph (the failed node
-    plus all its transitive dependents) and returns it for
-    selective replanning.
+        When a task fails, this does NOT regenerate the entire plan.
+        Instead, it identifies the affected subgraph (the failed node
+        plus all its transitive dependents) and returns it for
+        selective replanning.
 
-    Args:
-        failed_node: Name of the failed node.
-        replan_fn:   Optional async function to generate replacement
-                     nodes. Signature: (failed_node, affected_nodes) -> list[dict].
+        Args:
+            failed_node: Name of the failed node.
+            replan_fn:   Optional async function to generate replacement
+                         nodes. Signature: (failed_node, affected_nodes) -> list[dict].
 
-    Returns:
-        Dict with the affected subgraph and optional new plan.
-    """
+        Returns:
+            Dict with the affected subgraph and optional new plan.
+        """
         affected = self._graph.affected_subgraph(failed_node)
 
         result: dict[str, Any] = {
@@ -406,15 +406,21 @@ class RecoveryManager:
 
         if replan_fn is not None:
             try:
-                # replan_fn can be sync or async.
                 import asyncio
                 if asyncio.iscoroutinefunction(replan_fn):
-                    new_plan = asyncio.get_event_loop().run_until_complete(
-                        replan_fn(failed_node, sorted(affected.nodes))
-                    )
+                    try:
+                        asyncio.get_running_loop()
+                        # Cannot await inside sync method; return pending indicator.
+                        result["replan_pending"] = True
+                    except RuntimeError:
+                        # No running loop — safe to create a new one.
+                        new_plan = asyncio.run(
+                            replan_fn(failed_node, sorted(affected.nodes))
+                        )
+                        result["new_plan"] = new_plan
                 else:
                     new_plan = replan_fn(failed_node, sorted(affected.nodes))
-                result["new_plan"] = new_plan
+                    result["new_plan"] = new_plan
             except Exception as exc:  # noqa: BLE001
                 result["replan_error"] = str(exc)
 
@@ -434,6 +440,7 @@ class RecoveryManager:
         node.state = ExecutionNodeState.PENDING
         node.error = None
         node.started_at = None
+        node.completed_at = None
         return {
             "action": "retry",
             "node": node.name,

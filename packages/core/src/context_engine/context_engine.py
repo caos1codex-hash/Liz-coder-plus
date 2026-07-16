@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from .context_builder import ContextBuilder, ContextBuilderConfig
 from .context_budget import ContextBudgetConfig
@@ -47,8 +47,7 @@ from .models import (
 from .subtask_generator import SubTaskGenerator, SubTaskMeta
 from .task_decomposer import TaskDecomposer
 
-if TYPE_CHECKING:
-    pass
+
 
 logger = logging.getLogger(__name__)
 

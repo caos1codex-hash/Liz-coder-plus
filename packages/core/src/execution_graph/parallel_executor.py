@@ -20,7 +20,7 @@ from .dependency_graph import DependencyGraph
 from .models import ExecutionNode, ExecutionNodeState, ExecutionResult
 from .retry_policy import RetryPolicy
 from .scheduler import ParallelScheduler, SchedulerConfig
-from .state_machine import ExecutionStateMachine, StateTransition
+from .state_machine import ExecutionStateMachine
 
 logger = logging.getLogger(__name__)
 

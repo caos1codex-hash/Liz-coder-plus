@@ -9,10 +9,8 @@ with jitter, retryable exception classification, and attempt tracking.
 from __future__ import annotations
 
 import logging
-import math
 import random
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -87,7 +85,8 @@ class RetryPolicy:
         Uses exponential backoff with optional jitter::
 
             delay = min(base_delay * exponential_base ** attempt, max_delay)
-            delay = delay * (1 - jitter/2 + random * jitter)
+            delay = delay + uniform(-jitter_range, +jitter_range)
+            where jitter_range = delay * jitter
 
         Args:
             attempt: The attempt number (0-based).

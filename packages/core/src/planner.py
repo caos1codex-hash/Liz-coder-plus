@@ -411,11 +411,6 @@ class Planner:
 # ----------------------------------------------------------------------
 
 
-def _matches_any(text: str, patterns: list[str]) -> bool:
-    """Return True if any pattern matches ``text``."""
-    return any(re.search(p, text) for p in patterns)
-
-
 __all__ = [
     "Plan",
     "Planner",
