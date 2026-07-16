@@ -48,6 +48,23 @@ from src.events import (
     RECOVERY_WORKFLOW_RESUMED,
 )
 
+# Sprint 3.6 — plan execution events (imported for reference).
+_PLAN_LIFECYCLE_EVENTS = [
+    "plan.created",
+    "plan.validating",
+    "plan.ready",
+    "plan.started",
+    "plan.completed",
+    "plan.failed",
+    "plan.cancelled",
+    "plan.task.assigned",
+    "plan.task.started",
+    "plan.task.completed",
+    "plan.task.failed",
+    "plan.task.skipped",
+    "plan.task.retry",
+]
+
 if TYPE_CHECKING:
     from src.task import TaskState
 

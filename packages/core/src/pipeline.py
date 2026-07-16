@@ -212,19 +212,56 @@ async def stage_plan_execution(
 ) -> PipelineRequest:
     """Invoke the planner if one is attached.
 
-    The planner may fill ``req.metadata['plan']`` with a list of
-    sub-tasks. For now we only record that the stage ran so the
-    rest of the pipeline can detect planner presence.
+    Sprint 3.6: If a PlanExecutor is attached AND the planner
+    produces more than one sub-task, the full plan execution flow
+    is delegated to the PlanExecutor. The plan result is stored
+    in ``req.metadata['executed_plan']`` and the pipeline short-
+    circuits (no further stages needed).
+
+    Otherwise, falls back to the Sprint 1.7 behaviour: the plan
+    is recorded in ``req.metadata['plan']`` for informational use.
     """
     planner = getattr(orch, "_planner", None)
     if planner is None:
         return req
     try:
-        plan = await planner.plan(req.message, req.context)
-        req.metadata["plan"] = plan
+        plan_result = await planner.plan(req.message, req.context)
+        req.metadata["plan"] = plan_result
+
+        # Sprint 3.6: full plan execution via PlanExecutor.
+        plan_executor = getattr(orch, "_plan_executor", None)
+        if (
+            plan_executor is not None
+            and isinstance(plan_result, list)
+            and len(plan_result) > 1
+        ):
+            executed_plan = await plan_executor.execute_plan(
+                plan_result,
+                original_message=req.message,
+                context=req.context,
+            )
+            req.metadata["executed_plan"] = executed_plan
+
+            # Build a composite response from the plan's task results.
+            responses: list[str] = []
+            for t in executed_plan.tasks:
+                if t.status.value == "completed" and t.result:
+                    responses.append(str(t.result))
+                elif t.status.value == "skipped":
+                    responses.append(f"[Omitido: {t.name}]")
+                elif t.error:
+                    responses.append(f"[Error en {t.name}: {t.error}]")
+
+            if responses:
+                req.response = "\n\n".join(responses)
+                req.metadata["plan_execution_completed"] = True
+                req.metadata["plan_metrics"] = executed_plan.metrics()
+            else:
+                req.metadata["plan_execution_completed"] = False
+
         logger.debug(
             "Planner produced %d item(s) for session %s",
-            len(plan) if isinstance(plan, (list, tuple)) else 1,
+            len(plan_result) if isinstance(plan_result, (list, tuple)) else 1,
             req.session_id,
         )
     except Exception:  # noqa: BLE001

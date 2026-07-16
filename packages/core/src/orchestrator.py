@@ -77,6 +77,7 @@ class Orchestrator:
         self._memory: MemoryManager | None = None
         self._agent_timeout = agent_timeout
         self._planner: Any | None = None  # Sprint 1.7 — Phase 5
+        self._plan_executor: Any | None = None  # Sprint 3.6
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
@@ -145,6 +146,21 @@ class Orchestrator:
         """
         self._planner = planner
         logger.info("Planner attached to Orchestrator")
+
+    @property
+    def plan_executor(self) -> Any | None:
+        """Optional PlanExecutor for full plan lifecycle management (Sprint 3.6)."""
+        return self._plan_executor
+
+    def attach_plan_executor(self, executor: Any) -> None:
+        """Attach a PlanExecutor instance (Sprint 3.6).
+
+        The PlanExecutor manages the full lifecycle of plans produced
+        by the Planner: validation, agent assignment, execution with
+        retries, error handling, and progress events.
+        """
+        self._plan_executor = executor
+        logger.info("PlanExecutor attached to Orchestrator")
 
     # ------------------------------------------------------------------
     # Registration

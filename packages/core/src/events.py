@@ -51,6 +51,23 @@ WORKFLOW_CANCELLED = "workflow.cancelled"
 PLANNER_PLAN_CREATED = "planner.plan.created"
 PLANNER_DECISION = "planner.decision"
 
+# Plan execution lifecycle (Sprint 3.6)
+PLAN_CREATED = "plan.created"
+PLAN_VALIDATING = "plan.validating"
+PLAN_READY = "plan.ready"
+PLAN_STARTED = "plan.started"
+PLAN_PAUSED = "plan.paused"
+PLAN_COMPLETED = "plan.completed"
+PLAN_FAILED = "plan.failed"
+PLAN_CANCELLED = "plan.cancelled"
+
+PLAN_TASK_ASSIGNED = "plan.task.assigned"
+PLAN_TASK_STARTED = "plan.task.started"
+PLAN_TASK_COMPLETED = "plan.task.completed"
+PLAN_TASK_FAILED = "plan.task.failed"
+PLAN_TASK_SKIPPED = "plan.task.skipped"
+PLAN_TASK_RETRY = "plan.task.retry"
+
 # Observability (Sprint 1.7 — Phase 6)
 METRIC_RECORDED = "metric.recorded"
 
