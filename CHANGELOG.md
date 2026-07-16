@@ -2,6 +2,54 @@
 
 All notable changes to this project are documented here.
 
+## [0.8.0] — 2026-07-16 — Sprint 3.7
+
+### Sprint 3.7 — Plan Execution Tracking
+
+#### Added
+- **`PlanExecutionTracker`** (`packages/core/src/plan_tracking.py`):
+  capa avanzada de seguimiento de ejecución de planes que permite conocer
+  el progreso real de una tarea, detectar bloqueos y mantener
+  sincronización entre Planner, Orchestrator y Multi-Agent System.
+  - Estados de seguimiento: PENDING, PLANNING, EXECUTING, RUNNING_STEP,
+    COMPLETED, FAILED, PAUSED, CANCELLED.
+  - `TrackingState` con máquina de estados validada.
+  - `StepSnapshot`: captura punto-a-punto del estado de un paso.
+  - `PlanSnapshot`: captura punto-a-punto del estado completo del plan.
+  - `BlockageReport`: reporte estructurado de bloqueos detectados.
+  - Detección automática de bloqueos con timeout configurable.
+  - Snapshots periódicos con persistencia vía `ExecutionRepository`.
+  - Historial acotado de planes completados.
+  - Métricas por plan incluyendo utilización de agentes.
+- **8 nuevos eventos** en `events.py`: `tracking.plan.pending`,
+  `tracking.plan.planning`, `tracking.plan.executing`,
+  `tracking.plan.running_step`, `tracking.plan.blocked`,
+  `tracking.plan.resumed`, `tracking.step.progress`,
+  `tracking.snapshot.saved`.
+- **`Orchestrator.attach_plan_tracker()`**: método para conectar el
+  tracker al orquestador.
+- **`PlanExecutor.attach_tracker()`**: método para conectar el tracker
+  al executor, con actualizaciones automáticas de pasos.
+- **83 tests** en `tests/unit/test_plan_tracking.py` cubriendo: creación de
+  trackers, transiciones de estado, actualizaciones de pasos,
+  detección de bloqueos, pause/resume/cancel, persistencia,
+  tracking basado en eventos, integración con PlanExecutor, snapshots
+  e historial.
+
+#### Changed
+- `packages/core/src/orchestrator.py`: añadida propiedad `plan_tracker`
+  y método `attach_plan_tracker()`.
+- `packages/core/src/plan_executor.py`: añadido método `attach_tracker()`
+  y hooks de tracking en `_execute_single_task()` (assigned, running,
+  completed, failed).
+
+#### Architecture Notes
+- Sin dependencias circulares: `plan_tracking` importa solo de
+  `src.events` y `src.plan_models`.
+- Compatibilidad total con sprints anteriores (Sprint 3.6 y anteriores).
+- Baseline de tests: 944 passed (83 nuevos), 23 pre-existing failures
+  (permisos pydantic, no relacionados).
+
 ## [0.7.0] — 2026-07-14 — Sprint 2.3 estable
 
 ### Sprint 2.3 — Agent Lifecycle & Registry Integration

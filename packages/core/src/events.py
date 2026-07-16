@@ -92,3 +92,13 @@ CHECKPOINT_RESTORED = "checkpoint.restored"
 # System lifecycle
 SYSTEM_STARTED = "system.started"
 SYSTEM_STOPPED = "system.stopped"
+
+# Plan execution tracking (Sprint 3.7)
+TRACKING_PLAN_PENDING = "tracking.plan.pending"
+TRACKING_PLAN_PLANNING = "tracking.plan.planning"
+TRACKING_PLAN_EXECUTING = "tracking.plan.executing"
+TRACKING_PLAN_RUNNING_STEP = "tracking.plan.running_step"
+TRACKING_PLAN_BLOCKED = "tracking.plan.blocked"
+TRACKING_PLAN_RESUMED = "tracking.plan.resumed"
+TRACKING_STEP_PROGRESS = "tracking.step.progress"
+TRACKING_SNAPSHOT_SAVED = "tracking.snapshot.saved"

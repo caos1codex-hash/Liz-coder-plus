@@ -78,6 +78,7 @@ class Orchestrator:
         self._agent_timeout = agent_timeout
         self._planner: Any | None = None  # Sprint 1.7 — Phase 5
         self._plan_executor: Any | None = None  # Sprint 3.6
+        self._plan_tracker: Any | None = None  # Sprint 3.7
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
@@ -161,6 +162,21 @@ class Orchestrator:
         """
         self._plan_executor = executor
         logger.info("PlanExecutor attached to Orchestrator")
+
+    @property
+    def plan_tracker(self) -> Any | None:
+        """Optional PlanExecutionTracker for advanced tracking (Sprint 3.7)."""
+        return self._plan_tracker
+
+    def attach_plan_tracker(self, tracker: Any) -> None:
+        """Attach a PlanExecutionTracker instance (Sprint 3.7).
+
+        The tracker maintains a real-time view of plan progress,
+        detects blockages, and synchronises state across Planner,
+        Orchestrator and Multi-Agent System.
+        """
+        self._plan_tracker = tracker
+        logger.info("PlanExecutionTracker attached to Orchestrator")
 
     # ------------------------------------------------------------------
     # Registration

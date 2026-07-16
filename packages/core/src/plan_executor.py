@@ -132,11 +132,27 @@ class PlanExecutor:
         # Execution repository for persistence (late binding).
         self._execution_repo: Any = None
 
+        # Plan tracker for advanced tracking (Sprint 3.7).
+        self._tracker: Any = None
+
         logger.info("PlanExecutor initialized")
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def attach_tracker(self, tracker: Any) -> None:
+        """Attach a PlanExecutionTracker for advanced plan tracking.
+
+        When attached, the executor will automatically bind each
+        executed plan to the tracker and update step progress in
+        real time.
+
+        Args:
+            tracker: A PlanExecutionTracker instance.
+        """
+        self._tracker = tracker
+        logger.info("PlanExecutionTracker attached to PlanExecutor")
 
     def attach_execution_repository(self, repo: Any) -> None:
         """Attach an ExecutionRepository for plan history persistence."""
@@ -176,6 +192,16 @@ class PlanExecutor:
             strategy=strategy,
             rationale=rationale,
         )
+
+        # Sprint 3.7: Create tracker entry if tracker is attached.
+        if self._tracker is not None:
+            self._tracker.create_tracker(
+                plan.id,
+                strategy=plan.strategy,
+                original_message=original_message,
+            )
+            self._tracker.bind_plan(plan.id, plan)
+
         plan.transition_to(PlanState.VALIDATING)
         await self._emit(PLAN_VALIDATING, {
             "plan_id": plan.id,
@@ -469,6 +495,15 @@ class PlanExecutor:
         agent_name = self._resolve_agent(task)
         task.agent_assigned = agent_name
         task.transition_to(PlanTaskStatus.ASSIGNED)
+
+        # Sprint 3.7: Update tracker step.
+        if self._tracker is not None:
+            self._tracker.update_step(
+                plan.id, task.id,
+                status="assigned",
+                agent_assigned=agent_name,
+            )
+
         await self._emit(PLAN_TASK_ASSIGNED, {
             "plan_id": plan.id,
             "task_id": task.id,
@@ -480,6 +515,15 @@ class PlanExecutor:
         while True:
             task.transition_to(PlanTaskStatus.RUNNING)
             task.started_at = task.started_at or plan.tasks[0].created_at
+
+            # Sprint 3.7: Update tracker step.
+            if self._tracker is not None:
+                self._tracker.update_step(
+                    plan.id, task.id,
+                    status="running",
+                    agent_assigned=task.agent_assigned,
+                )
+
             await self._emit(PLAN_TASK_STARTED, {
                 "plan_id": plan.id,
                 "task_id": task.id,
@@ -496,6 +540,17 @@ class PlanExecutor:
                 task.result = result
                 task.execution_time_ms = duration_ms
                 task.transition_to(PlanTaskStatus.COMPLETED)
+
+                # Sprint 3.7: Update tracker step.
+                if self._tracker is not None:
+                    self._tracker.update_step(
+                        plan.id, task.id,
+                        status="completed",
+                        result=result,
+                        execution_time_ms=round(duration_ms, 2),
+                        retry_count=task.retry_count,
+                    )
+
                 await self._emit(PLAN_TASK_COMPLETED, {
                     "plan_id": plan.id,
                     "task_id": task.id,
@@ -522,6 +577,16 @@ class PlanExecutor:
 
                 # Transition to FAILED first so can_retry is correct.
                 task.transition_to(PlanTaskStatus.FAILED)
+
+                # Sprint 3.7: Update tracker step.
+                if self._tracker is not None:
+                    self._tracker.update_step(
+                        plan.id, task.id,
+                        status="failed",
+                        error=str(exc),
+                        execution_time_ms=round(duration_ms, 2),
+                        retry_count=task.retry_count,
+                    )
 
                 logger.warning(
                     "PlanTask '%s' failed (attempt %d/%d): %s",
