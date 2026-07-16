@@ -91,6 +91,8 @@ class PlanExecutorConfig:
     retry_backoff_cap: float = 30.0
     continue_on_error: bool = True
     pause_between_tasks: float = 0.0
+    enable_parallel: bool = False
+    max_parallel_tasks: int = 4
 
 
 # ----------------------------------------------------------------------
