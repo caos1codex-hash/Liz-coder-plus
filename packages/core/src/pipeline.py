@@ -183,8 +183,32 @@ async def stage_persist_user_turn(
 async def stage_build_context(
     orch: "Orchestrator", req: PipelineRequest
 ) -> PipelineRequest:
-    """Build the agent context from session state."""
+    """Build the agent context from session state.
+
+    Sprint 3.9: If a ContextEngine is attached, it enriches the
+    context with intelligent file/memory/history selection.
+    Otherwise, falls back to the original behaviour.
+    """
     req.context = orch._build_context(req.session_id)
+
+    # Sprint 3.9: enrich with ContextEngine if available.
+    ctx_engine = getattr(orch, "_context_engine", None)
+    if ctx_engine is not None:
+        try:
+            agent_ctx = await ctx_engine.build_context(
+                task=req.message,
+                agent_name=req.agent_name or "",
+                session_id=req.session_id,
+                history=req.context.get("history", []),
+            )
+            req.context["agent_context"] = agent_ctx
+            req.context["task"] = req.message
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "ContextEngine failed for session %s; "
+                "continuing with standard context",
+                req.session_id,
+            )
     return req
 
 

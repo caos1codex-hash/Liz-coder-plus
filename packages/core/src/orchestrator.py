@@ -79,6 +79,7 @@ class Orchestrator:
         self._planner: Any | None = None  # Sprint 1.7 — Phase 5
         self._plan_executor: Any | None = None  # Sprint 3.6
         self._plan_tracker: Any | None = None  # Sprint 3.7
+        self._context_engine: Any | None = None  # Sprint 3.9
 
         # Make sure the router's default agent is also registered here.
         default = self._router.default_agent
@@ -177,6 +178,20 @@ class Orchestrator:
         """
         self._plan_tracker = tracker
         logger.info("PlanExecutionTracker attached to Orchestrator")
+
+    @property
+    def context_engine(self) -> Any | None:
+        """Optional ContextEngine for intelligent context engineering (Sprint 3.9)."""
+        return self._context_engine
+
+    def attach_context_engine(self, engine: Any) -> None:
+        """Attach a ContextEngine instance (Sprint 3.9).
+
+        The ContextEngine manages intelligent context selection,
+        ranking, compression and caching for agent execution.
+        """
+        self._context_engine = engine
+        logger.info("ContextEngine attached to Orchestrator")
 
     # ------------------------------------------------------------------
     # Registration
