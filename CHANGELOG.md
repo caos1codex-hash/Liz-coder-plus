@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here.
 
+## [0.10.0] — 2026-07-17 — Sprint 4.2
+
+### Sprint 4.2 — Tool Intelligence: Tool Selection Engine
+
+#### Resumen
+Motor de selección automática de herramientas que elige la mejor
+herramienta disponible para cada tarea recibida por el Planner.
+No ejecuta herramientas — solo selecciona.
+
+#### Nuevos archivos (`packages/tools/src/`)
+- **`exceptions.py`** — Jerarquía de excepciones:
+  `ToolSelectionError`, `NoToolFoundError`, `AmbiguousSelectionError`,
+  `RankingError`, `FilterError`.
+- **`filters.py`** — 8 filtros independientes y reutilizables:
+  `AvailabilityFilter`, `CapabilityFilter`, `ExecutionModeFilter`,
+  `PermissionFilter`, `CostFilter`, `LatencyFilter`, `SafetyFilter`,
+  `UserPreferenceFilter`. Incluye `SelectionContext`, `ExecutionMode`
+  y `DEFAULT_FILTER_CHAIN`.
+- **`ranking.py`** — Scoring multi-factor con pesos configurables:
+  `RankingWeights` (8 factores), `RankingResult`, `ToolRanker`.
+  Score normalizado entre 0.0 y 1.0.
+- **`selection.py`** — `ToolSelectionEngine` con métodos:
+  `select_tool()`, `select_tools()`, `rank_tools()`, `score_tool()`.
+  Incluye `EngineConfig` para configuración completa.
+
+#### Tests (133 nuevos)
+- `tests/unit/test_tool_selection_exceptions.py` — 23 tests
+- `tests/unit/test_tool_selection_filters.py` — 44 tests
+- `tests/unit/test_tool_selection_ranking.py` — 40 tests
+- `tests/unit/test_tool_selection.py` — 26 tests
+
+#### Calidad
+- ruff: ✅ All checks passed (nuevos archivos)
+- black: ✅ Formatted
+- mypy --strict: ✅ 0 errores en archivos nuevos
+- pytest: ✅ 133/133 passed + 57 tests preexistentes sin regresión
+
+#### Notas
+- Sin cambios en la arquitectura existente.
+- Compatibilidad total con el código preexistente.
+- `__init__.py` actualizado a v0.3.0 con todas las nuevas exportaciones.
+
 ## [0.9.0] — 2026-07-16 — Sprint 3.10
 
 ### Sprint 3.10 — Finalización, Auditoría y Release
