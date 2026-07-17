@@ -149,7 +149,48 @@ entre el backend y el core.
   `PermissionService` antes de ejecutar. Decisiones: `allow`,
   `confirm`, `deny`, `timeout`, `cancelled`.
 
-### 2.7 Shared (`packages/shared`)
+### 2.7 Tool Intelligence (`packages/tool_intelligence`) — Sprint 4.1
+
+Capa de razonamiento sobre el `ToolRegistry` que permite **descubrir,
+clasificar y seleccionar** automáticamente las herramientas disponibles
+antes de ejecutar una tarea. Inspirada en el comportamiento de
+Claude Code y Codex.
+
+- **ToolMetadata:** snapshot estático de una herramienta (id, nombre,
+  descripción, categoría, capabilities, riesgo, coste, latencia,
+  permisos, dependencias, modelo requerido, plugins, confiabilidad).
+  Construible desde cualquier `BaseTool` vía `from_base_tool()`.
+- **CapabilityIndex:** catálogo buscable por id, nombre, alias,
+  categoría, capability (jerárquica + wildcards), tag y keyword.
+  Auto-extrae keywords de la descripción.
+- **RegistryCache:** envoltorio con lazy build, TTL configurable,
+  `invalidate()`, `refresh()` y `incremental_update()` para evitar
+  reconstruir el índice completo en cada cambio.
+- **CompatibilityChecker:** verifica plataforma, dependencias (vía
+  `shutil.which` o resolver custom), plugins, permisos y modelo
+  requerido. Cachea reports por `(tool_id, platform, plugins, perms,
+  models)`.
+- **ToolRanker:** scorea candidatos con 6 factores ponderados y
+  normalizados a `[0, 1]`: semántica (overlap de keywords),
+  capability match (exacto/padre/sub), historial (`success_rate`),
+  coste, latencia y confiabilidad declarada.
+- **ToolSelector:** API pública que orquesta el flujo completo
+  (gather → filter risk → filter runtime → check compat → rank → top_k).
+  Acepta `UserIntent` y `SelectionContext`. Expone `select_for_plan()`
+  para integrarse con la salida del Planner y
+  `select_required_capability()` que lanza `CapabilityMissing` si
+  nadie provee la capability pedida.
+- **Excepciones:** `ToolIntelligenceError` (base),
+  `ToolNotCompatible`, `CapabilityMissing`, `ToolSelectionError`,
+  `RankingError`.
+
+El paquete es **independiente**: no importa `packages/tools` ni
+`packages/core`, lo que permite usarlo standalone. La integración se
+hace en el sentido contrario (el orquestador importa
+`tool_intelligence`). Ver `packages/tool_intelligence/README.md` para
+el diagrama de flujo detallado y la API pública.
+
+### 2.8 Shared (`packages/shared`)
 
 - **Contenido:** modelos Pydantic, enumeraciones, tipos y utilidades.
 - **Regla:** este paquete **no depende de ningún otro** del proyecto.
