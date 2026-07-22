@@ -21,6 +21,7 @@ from fastapi import FastAPI
 
 from src import __version__
 from src.api.ws_routes import get_orchestrator, get_ws_manager, router as ws_router
+from src.api.management_routes import router as mgmt_router
 from src.core.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,7 @@ app = FastAPI(
 
 # Register routes.
 app.include_router(ws_router)
+app.include_router(mgmt_router)
 
 
 @app.get("/health", tags=["system"])
