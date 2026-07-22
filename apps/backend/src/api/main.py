@@ -12,6 +12,7 @@ It registers:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,8 +21,187 @@ from fastapi import FastAPI
 
 from src import __version__
 from src.api.ws_routes import get_orchestrator, get_ws_manager, router as ws_router
+from src.core.config import load_config
 
 logger = logging.getLogger(__name__)
+
+
+async def _initialize_llm(orchestrator: object) -> None:
+    """Initialize and attach the LLM subsystem to the orchestrator.
+
+    This function loads the ModelManager, registers models from
+    configuration, creates the LLMAgent, and wires everything
+    into the orchestrator. Gracefully degrades if no API keys
+    are configured — the LLMAgent falls back to echo mode.
+    """
+    try:
+        # Dynamically load the LLM package.
+        repo_root = Path(__file__).resolve().parents[4]
+        llm_pkg = repo_root / "packages" / "llm" / "src"
+        core_pkg = repo_root / "packages" / "core" / "src"
+
+        if str(llm_pkg) not in sys.path:
+            sys.path.insert(0, str(llm_pkg))
+        if str(core_pkg) not in sys.path:
+            sys.path.insert(0, str(core_pkg))
+
+        from src.llm.manager import ModelManager  # type: ignore[import-untyped]
+        from src.llm.models import ModelInfo, ModelProvider, ModelCapabilities, ModelStatus  # type: ignore[import-untyped]
+        from src.llm_agent import LLMAgent  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning(
+            "LLM package not available. "
+            "Continuing with echo agent."
+        )
+        return
+
+    try:
+        config = load_config()
+        ai_cfg = config.ai
+
+        # Create ModelManager.
+        mm = ModelManager(default_model=ai_cfg.model)
+
+        # Register models from environment variables.
+        registered_count = 0
+
+        # OpenAI
+        openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("LIZ_AI_API_KEY", "")
+        if openai_key:
+            openai_base = os.getenv("LIZ_AI_BASE_URL", "")
+            openai_models = [ai_cfg.model, "gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+            for model_id in openai_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.OPENAI,
+                    display_name=model_id,
+                    description=f"OpenAI model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=128000, max_output_tokens=16384,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    base_url=openai_base or "https://api.openai.com/v1",
+                    api_key_env="OPENAI_API_KEY",
+                ))
+                registered_count += 1
+
+        # Anthropic Claude
+        claude_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if claude_key:
+            claude_models = ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-20250414"]
+            for model_id in claude_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.ANTHROPIC,
+                    display_name=model_id,
+                    description=f"Anthropic Claude model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=200000, max_output_tokens=8192,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="ANTHROPIC_API_KEY",
+                ))
+                registered_count += 1
+
+        # Google Gemini
+        google_key = os.getenv("GOOGLE_API_KEY", "")
+        if google_key:
+            gemini_models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+            for model_id in gemini_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.GOOGLE,
+                    display_name=model_id,
+                    description=f"Google Gemini model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=1048576, max_output_tokens=65536,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="GOOGLE_API_KEY",
+                ))
+                registered_count += 1
+
+        # Ollama (local)
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        ollama_models_env = os.getenv("LIZ_OLLAMA_MODELS", "llama3:8b,qwen2.5:7b").split(",")
+        # Register Ollama if the URL is set.
+        if os.getenv("LIZ_OLLAMA_ENABLE", "").lower() in ("1", "true", "yes"):
+            for model_id in ollama_models_env:
+                model_id = model_id.strip()
+                if not model_id or model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.OLLAMA,
+                    display_name=model_id,
+                    description=f"Local Ollama model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=False,
+                        context_window=8192, max_output_tokens=4096,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    base_url=ollama_url,
+                ))
+                registered_count += 1
+
+        # OpenRouter
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+        if openrouter_key:
+            openrouter_models_env = os.getenv("LIZ_OPENROUTER_MODELS", "anthropic/claude-3.5-sonnet").split(",")
+            for model_id in openrouter_models_env:
+                model_id = model_id.strip()
+                if not model_id or model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.OPENROUTER,
+                    display_name=model_id,
+                    description=f"OpenRouter model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=128000, max_output_tokens=16384,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="OPENROUTER_API_KEY",
+                    base_url="https://openrouter.ai/api/v1",
+                ))
+                registered_count += 1
+
+        # Initialize the ModelManager.
+        await mm.initialize()
+
+        # Create and register the LLMAgent.
+        llm_agent = LLMAgent(
+            model_manager=mm,
+            default_model=ai_cfg.model,
+            temperature=ai_cfg.temperature,
+            max_tokens=ai_cfg.max_tokens,
+        )
+        await llm_agent.initialize()
+        orchestrator.register_agent(llm_agent)
+
+        logger.info(
+            "LLM subsystem initialized: %d model(s) registered, "
+            "agent='%s', default_model='%s'",
+            registered_count,
+            llm_agent.name,
+            ai_cfg.model,
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to initialize LLM subsystem. "
+            "Continuing with echo agent."
+        )
 
 
 async def _initialize_memory(orchestrator: object) -> None:
@@ -94,6 +274,12 @@ async def lifespan(app: FastAPI):
     logger.info("Liz Coder Plus backend v%s starting", __version__)
     logger.info("WebSocket manager: %d connections", ws.connection_count)
 
+    # Initialize LLM subsystem (ModelManager + LLMAgent).
+    await _initialize_llm(orch)
+
+    # Initialize the orchestrator (agents, event bus, etc.).
+    await orch.initialize()
+
     # Initialize persistent memory if configured.
     await _initialize_memory(orch)
 
@@ -138,7 +324,7 @@ async def status() -> dict[str, object]:
     return {
         "service": "liz-coder-plus-backend",
         "version": __version__,
-        "stage": "Sprint 1.4 - Persistent Memory",
+        "stage": "Sprint 4 - LLM Integration Complete",
         "state": "operational",
         "ws_connections": ws.connection_count,
         "ws_sessions": ws.list_sessions(),
