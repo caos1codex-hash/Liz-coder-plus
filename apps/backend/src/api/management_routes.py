@@ -1,6 +1,6 @@
 """REST API routes for system management.
 
-Sprint 4 - Phase 2.
+Sprint 4 - Phase 2, Sprint 5 - Chat & NVIDIA.
 
 Provides REST endpoints for:
     - /api/models      — List, activate, deactivate AI models
@@ -9,6 +9,8 @@ Provides REST endpoints for:
     - /api/agents      — List agents and their status
     - /api/memory      — Memory management
     - /api/config      — View current configuration
+    - /api/chat        — REST chat endpoint (no WebSocket needed)
+    - /api/models/discover — Discover available models from providers
 
 These endpoints complement the WebSocket chat endpoint and provide
 a management interface for the desktop client.
@@ -20,10 +22,42 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["management"])
+
+
+# ---------------------------------------------------------------------
+# Request/Response Models
+# ---------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    """REST chat request model."""
+
+    message: str = Field(..., min_length=1, description="User message")
+    session_id: str = Field(default="rest-default", description="Session ID")
+    mode: str = Field(default="confirmation", description="Permission mode")
+    model: str = Field(default="", description="Override model selection")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=4096, ge=1, le=131072)
+
+
+class ChatResponse(BaseModel):
+    """REST chat response model."""
+
+    type: str
+    content: str
+    status: str
+    session_id: str
+    message_id: str = ""
+    agent_name: str = ""
+    model: str = ""
+    provider: str = ""
+    duration_ms: int = 0
+    stage_timings: dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------
@@ -399,6 +433,242 @@ async def system_info() -> dict[str, Any]:
         info["models"] = mm.summary()
 
     return info
+
+
+# ---------------------------------------------------------------------
+# Chat (REST)
+# ---------------------------------------------------------------------
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat_rest(request: ChatRequest) -> dict[str, Any]:
+    """Send a message and get a response via REST (no WebSocket).
+
+    This endpoint allows clients that don't support WebSocket to
+    interact with Liz via standard HTTP POST. The response is
+    generated using the full execution pipeline (plan, context
+    engine, multi-agent dispatch if applicable).
+
+    Args:
+        request: ChatRequest with message, session_id, mode, etc.
+
+    Returns:
+        ChatResponse with content, metadata, and timing info.
+    """
+    from src.api.ws_routes import get_orchestrator
+
+    orch = get_orchestrator()
+
+    # Override model if requested.
+    if request.model:
+        mm = _find_model_manager(orch)
+        if mm is not None:
+            try:
+                mm.activate(request.model)
+            except KeyError:
+                pass  # Let the system use whatever is available
+
+    result = await orch.handle_message(
+        message=request.message,
+        session_id=request.session_id,
+        mode=request.mode,
+    )
+
+    return result
+
+
+@router.post("/chat/complete")
+async def chat_complete(request: ChatRequest) -> dict[str, Any]:
+    """Direct LLM completion without the full pipeline.
+
+    Bypasses the orchestrator pipeline and calls the LLM directly.
+    Useful for simple completions, code generation, and translations.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[4]
+    llm_pkg = repo_root / "packages" / "llm" / "src"
+
+    if str(llm_pkg) not in sys.path:
+        sys.path.insert(0, str(llm_pkg))
+
+    from src.llm.manager import ModelManager
+    from src.llm.models import LLMMessage, MessageRole
+
+    # Find an available model.
+    model_id = request.model
+    api_key = (
+        os.getenv("NVIDIA_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("LIZ_AI_API_KEY")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or os.getenv("MISTRAL_API_KEY")
+        or ""
+    )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="No API key configured. Set NVIDIA_API_KEY, OPENAI_API_KEY, "
+                   "DEEPSEEK_API_KEY, or MISTRAL_API_KEY.",
+        )
+
+    # Determine provider and base URL based on which key is available.
+    if os.getenv("NVIDIA_API_KEY"):
+        api_key = os.getenv("NVIDIA_API_KEY")
+        base_url = "https://integrate.api.nvidia.com/v1"
+        if not model_id:
+            model_id = "meta/llama-3.1-405b-instruct"
+    elif os.getenv("DEEPSEEK_API_KEY"):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        base_url = "https://api.deepseek.com/v1"
+        if not model_id:
+            model_id = "deepseek-chat"
+    elif os.getenv("MISTRAL_API_KEY"):
+        api_key = os.getenv("MISTRAL_API_KEY")
+        base_url = "https://api.mistral.ai/v1"
+        if not model_id:
+            model_id = "mistral-large-latest"
+    else:
+        base_url = os.getenv("LIZ_AI_BASE_URL", "https://api.openai.com/v1")
+        if not model_id:
+            model_id = "gpt-4o-mini"
+
+    import httpx
+    import time
+
+    messages = [
+        LLMMessage(role=MessageRole.SYSTEM, content=(
+            "Eres Liz, una asistente de IA avanzada. "
+            "Responde de forma concisa y útil."
+        )),
+        LLMMessage(role=MessageRole.USER, content=request.message),
+    ]
+
+    start = time.monotonic()
+    async with httpx.AsyncClient(
+        base_url=base_url,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        timeout=120.0,
+    ) as client:
+        payload = {
+            "model": model_id,
+            "messages": [m.to_openai_format() for m in messages],
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+        }
+        response = await client.post("/chat/completions", json=payload)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"LLM API error: {response.text[:500]}",
+            )
+        data = response.json()
+        duration_ms = int((time.monotonic() - start) * 1000)
+
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+
+        return {
+            "type": "message",
+            "content": content,
+            "status": "completed",
+            "session_id": request.session_id,
+            "model": data.get("model", model_id),
+            "provider": "direct",
+            "duration_ms": duration_ms,
+        }
+
+
+# ---------------------------------------------------------------------
+# Model Discovery
+# ---------------------------------------------------------------------
+
+
+@router.get("/models/discover")
+async def discover_models() -> dict[str, Any]:
+    """Discover available models from all configured providers.
+
+    Queries the NVIDIA NIM, DeepSeek, and Mistral APIs for their
+    available models. Requires at least one API key to be configured.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[4]
+    llm_pkg = repo_root / "packages" / "llm" / "src"
+    if str(llm_pkg) not in sys.path:
+        sys.path.insert(0, str(llm_pkg))
+
+    result: dict[str, Any] = {"providers": {}, "total": 0}
+
+    # NVIDIA NIM discovery.
+    nvidia_key = os.getenv("NVIDIA_API_KEY", "")
+    if nvidia_key:
+        try:
+            from src.llm.providers.nvidia import NvidiaProvider
+            models = await NvidiaProvider.discover_available_models(
+                api_key=nvidia_key,
+            )
+            result["providers"]["nvidia"] = {
+                "available": True,
+                "models": models,
+                "count": len(models),
+            }
+            result["total"] += len(models)
+        except Exception as exc:
+            result["providers"]["nvidia"] = {
+                "available": False,
+                "error": str(exc),
+                "count": 0,
+            }
+
+    # DeepSeek (no discovery API, list known models).
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if deepseek_key:
+        result["providers"]["deepseek"] = {
+            "available": True,
+            "models": [
+                {"id": "deepseek-chat", "owned_by": "deepseek"},
+                {"id": "deepseek-reasoner", "owned_by": "deepseek"},
+                {"id": "deepseek-coder", "owned_by": "deepseek"},
+            ],
+            "count": 3,
+        }
+        result["total"] += 3
+
+    # Mistral (no discovery API, list known models).
+    mistral_key = os.getenv("MISTRAL_API_KEY", "")
+    if mistral_key:
+        result["providers"]["mistral"] = {
+            "available": True,
+            "models": [
+                {"id": "mistral-large-latest", "owned_by": "mistral"},
+                {"id": "codestral-latest", "owned_by": "mistral"},
+                {"id": "pixtral-large-latest", "owned_by": "mistral"},
+                {"id": "open-mistral-nemo", "owned_by": "mistral"},
+                {"id": "mistral-small-latest", "owned_by": "mistral"},
+            ],
+            "count": 5,
+        }
+        result["total"] += 5
+
+    if result["total"] == 0:
+        result["message"] = (
+            "No API keys configured. Set NVIDIA_API_KEY, DEEPSEEK_API_KEY, "
+            "or MISTRAL_API_KEY to discover models."
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------
