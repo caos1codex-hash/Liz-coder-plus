@@ -1,18 +1,37 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "environment": "development",
   "ai": {
-    "provider": "openai",
-    "model": "gpt-4o-mini",
+    "provider": "nvidia",
+    "model": "meta/llama-3.1-405b-instruct",
     "temperature": 0.7,
     "max_tokens": 4096,
-    "api_key_env": "LIZ_AI_API_KEY",
+    "api_key_env": "NVIDIA_API_KEY",
     "models": {
-      "default": "gpt-4o-mini",
-      "coding": "gpt-4o",
-      "research": "claude-sonnet-4-20250514",
-      "fast": "gpt-4o-mini",
+      "default": "meta/llama-3.1-405b-instruct",
+      "coding": "deepseek-coder",
+      "research": "meta/llama-3.1-405b-instruct",
+      "fast": "google/gemma-2-9b-it",
+      "reasoning": "deepseek-reasoner",
       "local": "llama3:8b"
+    },
+    "nvidia": {
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "priority_models": [
+        "meta/llama-3.1-405b-instruct",
+        "meta/llama-3.1-70b-instruct",
+        "mistralai/mistral-large-2-instruct",
+        "qwen/qwen2.5-72b-instruct"
+      ]
+    },
+    "deepseek": {
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "mistral": {
+      "base_url": "https://api.mistral.ai/v1",
+      "api_key_env": "MISTRAL_API_KEY"
     }
   },
   "permissions": {
@@ -33,7 +52,11 @@
       "python --version",
       "pip list",
       "npm list",
-      "node --version"
+      "node --version",
+      "git add",
+      "git commit",
+      "git push",
+      "git pull"
     ],
     "denied_commands": [
       "rm -rf",

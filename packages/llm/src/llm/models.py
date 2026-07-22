@@ -25,6 +25,9 @@ class ModelProvider(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     OPENROUTER = "openrouter"
+    NVIDIA = "nvidia"
+    DEEPSEEK = "deepseek"
+    MISTRAL = "mistral"
 
 
 class ModelStatus(str, Enum):

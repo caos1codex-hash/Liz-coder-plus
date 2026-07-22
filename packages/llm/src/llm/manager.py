@@ -36,6 +36,9 @@ _PROVIDER_CLASS_MAP: dict[ModelProvider, tuple[str, str]] = {
     ModelProvider.ANTHROPIC: ("src.llm.providers.anthropic", "AnthropicProvider"),
     ModelProvider.GOOGLE: ("src.llm.providers.google", "GoogleProvider"),
     ModelProvider.OPENROUTER: ("src.llm.providers.openrouter", "OpenRouterProvider"),
+    ModelProvider.NVIDIA: ("src.llm.providers.nvidia", "NvidiaProvider"),
+    ModelProvider.DEEPSEEK: ("src.llm.providers.deepseek", "DeepSeekProvider"),
+    ModelProvider.MISTRAL: ("src.llm.providers.mistral", "MistralProvider"),
 }
 
 

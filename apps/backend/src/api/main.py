@@ -177,6 +177,151 @@ async def _initialize_llm(orchestrator: object) -> None:
                 ))
                 registered_count += 1
 
+        # NVIDIA NIM — auto-detect free models with the provided API key.
+        nvidia_key = os.getenv("NVIDIA_API_KEY", "")
+        if nvidia_key:
+            from src.llm.providers.nvidia import NvidiaProvider  # type: ignore[import-untyped]
+            try:
+                available_nvidia = await NvidiaProvider.discover_available_models(
+                    api_key=nvidia_key,
+                )
+                # Register discovered models (prefer large, free models first).
+                # Priority list: models known to be free on NVIDIA NIM.
+                nvidia_free_priority = [
+                    "meta/llama-3.1-405b-instruct",
+                    "meta/llama-3.1-70b-instruct",
+                    "mistralai/mistral-large-2-instruct",
+                    "mistralai/mixtral-8x22b-instruct-v0.1",
+                    "nvidia/llama-3.1-nemotron-70b-instruct",
+                    "google/gemma-2-27b-it",
+                    "meta/llama-3.1-8b-instruct",
+                    "nvidia/llama-3.1-nemotron-8b-instruct",
+                    "microsoft/phi-3.5-mini-instruct",
+                    "google/gemma-2-9b-it",
+                    "deepseek-ai/deepseek-coder-6.7b-instruct",
+                    "qwen/qwen2.5-72b-instruct",
+                ]
+                # Get IDs of available models.
+                available_ids = [
+                    m.get("id", "") for m in available_nvidia
+                    if m.get("id", "")
+                ]
+                logger.info(
+                    "NVIDIA NIM: discovered %d models", len(available_ids)
+                )
+                for model_id in nvidia_free_priority:
+                    if model_id in available_ids and model_id not in mm.list_models():
+                        mm.register(ModelInfo(
+                            model_id=model_id,
+                            provider=ModelProvider.NVIDIA,
+                            display_name=model_id.split("/")[-1],
+                            description=f"NVIDIA NIM (free): {model_id}",
+                            capabilities=ModelCapabilities(
+                                chat=True, streaming=True, function_calling=True,
+                                context_window=131072, max_output_tokens=4096,
+                            ),
+                            status=ModelStatus.ACTIVE,
+                            api_key_env="NVIDIA_API_KEY",
+                            base_url="https://integrate.api.nvidia.com/v1",
+                        ))
+                        registered_count += 1
+                # Register any additional discovered models not in priority list.
+                for model_id in available_ids:
+                    if model_id not in mm.list_models():
+                        mm.register(ModelInfo(
+                            model_id=model_id,
+                            provider=ModelProvider.NVIDIA,
+                            display_name=model_id.split("/")[-1],
+                            description=f"NVIDIA NIM: {model_id}",
+                            capabilities=ModelCapabilities(
+                                chat=True, streaming=True, function_calling=True,
+                                context_window=131072, max_output_tokens=4096,
+                            ),
+                            status=ModelStatus.ACTIVE,
+                            api_key_env="NVIDIA_API_KEY",
+                            base_url="https://integrate.api.nvidia.com/v1",
+                        ))
+                        registered_count += 1
+            except Exception:
+                logger.warning(
+                    "Failed to discover NVIDIA NIM models. "
+                    "Will use fallback models.",
+                    exc_info=True,
+                )
+                # Register fallback NVIDIA models if discovery fails.
+                nvidia_fallback_models = [
+                    "meta/llama-3.1-405b-instruct",
+                    "meta/llama-3.1-70b-instruct",
+                    "mistralai/mistral-large-2-instruct",
+                    "qwen/qwen2.5-72b-instruct",
+                ]
+                for model_id in nvidia_fallback_models:
+                    if model_id not in mm.list_models():
+                        mm.register(ModelInfo(
+                            model_id=model_id,
+                            provider=ModelProvider.NVIDIA,
+                            display_name=model_id.split("/")[-1],
+                            description=f"NVIDIA NIM (free): {model_id}",
+                            capabilities=ModelCapabilities(
+                                chat=True, streaming=True, function_calling=True,
+                                context_window=131072, max_output_tokens=4096,
+                            ),
+                            status=ModelStatus.ACTIVE,
+                            api_key_env="NVIDIA_API_KEY",
+                            base_url="https://integrate.api.nvidia.com/v1",
+                        ))
+                        registered_count += 1
+
+        # DeepSeek
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+        if deepseek_key:
+            deepseek_models = ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"]
+            for model_id in deepseek_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.DEEPSEEK,
+                    display_name=model_id,
+                    description=f"DeepSeek model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=65536, max_output_tokens=8192,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="DEEPSEEK_API_KEY",
+                    base_url="https://api.deepseek.com/v1",
+                ))
+                registered_count += 1
+
+        # Mistral AI
+        mistral_key = os.getenv("MISTRAL_API_KEY", "")
+        if mistral_key:
+            mistral_models = [
+                "mistral-large-latest",
+                "codestral-latest",
+                "pixtral-large-latest",
+                "open-mistral-nemo",
+                "mistral-small-latest",
+            ]
+            for model_id in mistral_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.MISTRAL,
+                    display_name=model_id,
+                    description=f"Mistral AI model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=131072, max_output_tokens=8192,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="MISTRAL_API_KEY",
+                    base_url="https://api.mistral.ai/v1",
+                ))
+                registered_count += 1
+
         # Initialize the ModelManager.
         await mm.initialize()
 
