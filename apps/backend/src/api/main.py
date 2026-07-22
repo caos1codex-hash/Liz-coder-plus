@@ -205,6 +205,80 @@ async def _initialize_llm(orchestrator: object) -> None:
         )
 
 
+async def _initialize_advanced_systems(orchestrator: object) -> None:
+    """Initialize Planner, ContextEngine, PlanExecutor, and Recovery.
+
+    Sprint 4 - Phase 3: Wire the advanced systems into the orchestrator
+    so the full pipeline (plan -> context -> execute -> recover) works.
+    """
+    try:
+        repo_root = Path(__file__).resolve().parents[4]
+        core_pkg = repo_root / "packages" / "core" / "src"
+
+        if str(core_pkg) not in sys.path:
+            sys.path.insert(0, str(core_pkg))
+
+        from src.planner import Planner
+        from src.context_engine.context_engine import ContextEngine
+        from src.plan_executor import PlanExecutor
+        from src.recovery import RecoveryManager, CheckpointManager
+        from src.plan_tracking import PlanExecutionTracker
+    except ImportError as exc:
+        logger.warning("Advanced systems not available: %s", exc)
+        return
+
+    try:
+        # 1. Planner.
+        planner = Planner(event_bus=orchestrator.event_bus)
+        orchestrator.attach_planner(planner)
+        logger.info("Planner attached to Orchestrator")
+
+        # 2. ContextEngine.
+        ctx_engine = ContextEngine(event_bus=orchestrator.event_bus)
+        orchestrator.attach_context_engine(ctx_engine)
+        logger.info("ContextEngine attached to Orchestrator")
+
+        # 3. PlanExecutor.
+        plan_executor = PlanExecutor(
+            orchestrator=orchestrator,
+            event_bus=orchestrator.event_bus,
+        )
+        orchestrator.attach_plan_executor(plan_executor)
+        logger.info("PlanExecutor attached to Orchestrator")
+
+        # 4. PlanExecutionTracker.
+        tracker = PlanExecutionTracker(
+            orchestrator=orchestrator,
+            event_bus=orchestrator.event_bus,
+        )
+        orchestrator.attach_plan_tracker(tracker)
+        logger.info("PlanExecutionTracker attached to Orchestrator")
+
+        # 5. Recovery (if memory is available).
+        if orchestrator._memory is not None and orchestrator._memory.db is not None:
+            cpm = CheckpointManager(orchestrator._memory.db)
+            await cpm.ensure_table()
+            cpm.attach_event_bus(orchestrator.event_bus)
+
+            recovery = RecoveryManager(
+                task_manager=orchestrator,
+                workflow_manager=orchestrator,
+                checkpoint_manager=cpm,
+                event_bus=orchestrator.event_bus,
+            )
+            # Store for future use.
+            orchestrator._recovery = recovery
+            logger.info("RecoveryManager initialized")
+
+        logger.info("Advanced systems initialized successfully")
+
+    except Exception:
+        logger.exception(
+            "Failed to initialize advanced systems. "
+            "Continuing with basic functionality."
+        )
+
+
 async def _initialize_memory(orchestrator: object) -> None:
     """Initialize and attach persistent memory to the orchestrator.
 
@@ -281,6 +355,9 @@ async def lifespan(app: FastAPI):
     # Initialize the orchestrator (agents, event bus, etc.).
     await orch.initialize()
 
+    # Initialize Planner, ContextEngine, and PlanExecutor.
+    await _initialize_advanced_systems(orch)
+
     # Initialize persistent memory if configured.
     await _initialize_memory(orch)
 
@@ -288,6 +365,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown.
     logger.info("Backend shutting down")
+    await orch.shutdown()
 
 
 app = FastAPI(
@@ -326,7 +404,7 @@ async def status() -> dict[str, object]:
     return {
         "service": "liz-coder-plus-backend",
         "version": __version__,
-        "stage": "Sprint 4 - LLM Integration Complete",
+        "stage": "Sprint 4 - Full System Integration",
         "state": "operational",
         "ws_connections": ws.connection_count,
         "ws_sessions": ws.list_sessions(),
