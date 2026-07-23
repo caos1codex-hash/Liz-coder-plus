@@ -200,6 +200,18 @@ class NvidiaProvider(BaseLLMProvider):
         message = choice.get("message", {})
         usage = data.get("usage", {})
 
+        # Parse tool calls if present (OpenAI-compatible format).
+        tool_calls = []
+        raw_tool_calls = message.get("tool_calls")
+        if raw_tool_calls:
+            for tc in raw_tool_calls:
+                func = tc.get("function", {})
+                tool_calls.append({
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "arguments": func.get("arguments", "{}"),
+                })
+
         return LLMResponse(
             content=message.get("content", ""),
             model=data.get("model", model),
@@ -210,6 +222,7 @@ class NvidiaProvider(BaseLLMProvider):
             ),
             finish_reason=choice.get("finish_reason", "stop"),
             duration_ms=duration_ms,
+            tool_calls=tool_calls,
             meta={"id": data.get("id", "")},
         )
 

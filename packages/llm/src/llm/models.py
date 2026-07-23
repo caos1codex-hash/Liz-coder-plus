@@ -217,6 +217,8 @@ class LLMResponse:
         finish_reason: Why generation stopped (stop, length, etc.).
         meta:      Provider-specific metadata.
         duration_ms: Wall-clock time for the request in ms.
+        tool_calls: List of tool/function calls requested by the model.
+                    Each item is a dict with keys: id, name, arguments.
     """
 
     content: str = ""
@@ -226,9 +228,10 @@ class LLMResponse:
     finish_reason: str = "stop"
     meta: dict[str, Any] = field(default_factory=dict)
     duration_ms: int = 0
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "content": self.content,
             "model": self.model,
             "provider": self.provider,
@@ -237,6 +240,9 @@ class LLMResponse:
             "meta": self.meta,
             "duration_ms": self.duration_ms,
         }
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
+        return d
 
 
 @dataclass(slots=True)

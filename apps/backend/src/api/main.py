@@ -34,17 +34,22 @@ async def _initialize_llm(orchestrator: object) -> None:
     configuration, creates the LLMAgent, and wires everything
     into the orchestrator. Gracefully degrades if no API keys
     are configured — the LLMAgent falls back to echo mode.
+
+    Sprint 6: Registers tools and wires tool-use loop to LLMAgent.
     """
     try:
         # Dynamically load the LLM package.
         repo_root = Path(__file__).resolve().parents[4]
         llm_pkg = repo_root / "packages" / "llm" / "src"
         core_pkg = repo_root / "packages" / "core" / "src"
+        tools_pkg = repo_root / "packages" / "tools" / "src"
 
         if str(llm_pkg) not in sys.path:
             sys.path.insert(0, str(llm_pkg))
         if str(core_pkg) not in sys.path:
             sys.path.insert(0, str(core_pkg))
+        if str(tools_pkg) not in sys.path:
+            sys.path.insert(0, str(tools_pkg))
 
         from src.llm.manager import ModelManager  # type: ignore[import-untyped]
         from src.llm.models import ModelInfo, ModelProvider, ModelCapabilities, ModelStatus  # type: ignore[import-untyped]
@@ -325,22 +330,69 @@ async def _initialize_llm(orchestrator: object) -> None:
         # Initialize the ModelManager.
         await mm.initialize()
 
-        # Create and register the LLMAgent.
+        # Sprint 6: Register tools from the tools package.
+        tools_registered = 0
+        try:
+            from src.tools.terminal_tool import TerminalTool  # type: ignore[import-untyped]
+            from src.tools.file_tool import FileTool  # type: ignore[import-untyped]
+            from src.tools.system_tool import SystemTool  # type: ignore[import-untyped]
+            from src.tools.code_execution_tool import CodeExecutionTool  # type: ignore[import-untyped]
+            from src.tools.web_search_tool import WebSearchTool  # type: ignore[import-untyped]
+
+            tool_classes = [
+                TerminalTool,
+                FileTool,
+                SystemTool,
+                CodeExecutionTool,
+                WebSearchTool,
+            ]
+            for tool_cls in tool_classes:
+                try:
+                    tool_instance = tool_cls()
+                    orchestrator.register_tool(tool_instance)
+                    tools_registered += 1
+                    logger.debug("Registered tool: %s", tool_instance.name)
+                except Exception:
+                    logger.exception("Failed to register tool %s", tool_cls.__name__)
+        except ImportError as exc:
+            logger.warning("Tools package not available: %s", exc)
+
+        # Create a tool bridge for the LLMAgent.
+        # The bridge connects the ToolExecutor to the orchestrator's tools.
+        class ToolBridge:
+            """Bridge between ToolExecutor and Orchestrator's registered tools."""
+            def __init__(self, tool_executor, orchestrator_tools):
+                self._tool_executor = tool_executor
+                self._orchestrator_tools = orchestrator_tools
+
+            async def execute(self, tool, params, *, session_id=""):
+                return await self._tool_executor.execute(
+                    tool, params, session_id=session_id
+                )
+
+        tool_bridge = ToolBridge(
+            tool_executor=orchestrator.tool_executor,
+            orchestrator_tools=orchestrator._tools,
+        )
+
+        # Create and register the LLMAgent with tool support.
         llm_agent = LLMAgent(
             model_manager=mm,
             default_model=ai_cfg.model,
             temperature=ai_cfg.temperature,
             max_tokens=ai_cfg.max_tokens,
+            tool_executor=tool_bridge,
         )
         await llm_agent.initialize()
         orchestrator.register_agent(llm_agent)
 
         logger.info(
             "LLM subsystem initialized: %d model(s) registered, "
-            "agent='%s', default_model='%s'",
+            "agent='%s', default_model='%s', %d tool(s) registered",
             registered_count,
             llm_agent.name,
             ai_cfg.model,
+            tools_registered,
         )
 
     except Exception:
