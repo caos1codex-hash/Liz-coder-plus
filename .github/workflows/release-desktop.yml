@@ -72,6 +72,7 @@ jobs:
             -c ${{ env.CONFIGURATION }} `
             -r win-x64 `
             --self-contained true `
+            -p:Platform=x64 `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishTrimmed=false `
@@ -87,6 +88,7 @@ jobs:
             -c ${{ env.CONFIGURATION }} `
             -r win-arm64 `
             --self-contained true `
+            -p:Platform=ARM64 `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishTrimmed=false `
