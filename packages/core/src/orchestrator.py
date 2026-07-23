@@ -591,6 +591,162 @@ class Orchestrator:
             }
 
     # ------------------------------------------------------------------
+    # Execution Graph integration (Sprint 6)
+    # ------------------------------------------------------------------
+
+    async def execute_plan_as_graph(
+        self,
+        plan_tasks: list[dict[str, Any]],
+        *,
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        """Execute a plan using the DAG-based execution graph.
+
+        Sprint 6: Converts a list of plan tasks (with dependencies)
+        into an execution graph and runs it with parallel execution.
+
+        Args:
+            plan_tasks: List of task dicts with keys: name, description,
+                       suggested_agent, suggested_tools, depends_on.
+            session_id: Session context.
+
+        Returns:
+            ExecutionResult dict with statistics.
+        """
+        try:
+            from src.execution_graph import (
+                DependencyGraph,
+                ExecutionNode,
+                ParallelExecutor,
+                ParallelExecutorConfig,
+            )
+
+            # Build dependency graph from plan tasks.
+            graph = DependencyGraph()
+            nodes: dict[str, ExecutionNode] = {}
+
+            for task_data in plan_tasks:
+                name = task_data.get("name", "")
+                description = task_data.get("description", "")
+                deps = task_data.get("depends_on", [])
+                tools = task_data.get("suggested_tools", [])
+
+                node = ExecutionNode(
+                    name=name,
+                    description=description,
+                    metadata={
+                        "agent": task_data.get("suggested_agent", "llm"),
+                        "tools": tools,
+                        "session_id": session_id,
+                    },
+                )
+                nodes[name] = node
+                graph.add_node(name)
+                for dep in deps:
+                    if dep in [t.get("name", "") for t in plan_tasks]:
+                        graph.add_edge(dep, name)
+
+            # Define node executor.
+            async def node_executor_fn(
+                node_name: str, node_data: dict[str, Any]
+            ) -> dict[str, Any]:
+                node = nodes.get(node_name)
+                if node is None:
+                    return {"status": "error", "error": "Node not found"}
+
+                # Use the LLM agent to handle the subtask.
+                agent = self._agents.get("llm")
+                if agent is None:
+                    agent = self._agents.get("echo")
+
+                desc = node.description or node.name
+                ctx = {
+                    "session_id": session_id,
+                    "mode": "automatic",
+                    "task": desc,
+                    "subtask": True,
+                }
+                try:
+                    result = await agent.handle(desc, ctx)
+                    return {"status": "ok", "output": result}
+                except Exception as exc:
+                    return {"status": "error", "error": str(exc)}
+
+            # Execute the graph.
+            config = ParallelExecutorConfig(
+                max_parallel=4,
+                default_timeout=60.0,
+            )
+            executor = ParallelExecutor(
+                graph=graph,
+                nodes=nodes,
+                node_executor=node_executor_fn,
+                config=config,
+                event_callback=self._emit,
+            )
+
+            result = await executor.execute()
+
+            logger.info(
+                "Execution graph completed: %d/%d nodes, %dms",
+                result.nodes_completed,
+                result.nodes_total,
+                result.duration_ms,
+            )
+
+            return result.to_dict() if hasattr(result, "to_dict") else {
+                "status": result.status,
+                "nodes_total": result.nodes_total,
+                "nodes_completed": result.nodes_completed,
+                "nodes_failed": result.nodes_failed,
+                "duration_ms": result.duration_ms,
+            }
+
+        except ImportError:
+            logger.warning(
+                "Execution graph package not available; "
+                "using sequential execution"
+            )
+            # Fallback: execute tasks sequentially.
+            return await self._execute_plan_sequential(plan_tasks, session_id=session_id)
+        except Exception:
+            logger.exception("Execution graph failed")
+            return await self._execute_plan_sequential(plan_tasks, session_id=session_id)
+
+    async def _execute_plan_sequential(
+        self, plan_tasks: list[dict[str, Any]], session_id: str = ""
+    ) -> dict[str, Any]:
+        """Fallback sequential execution for plans when graph is unavailable."""
+        results = []
+        for task_data in plan_tasks:
+            name = task_data.get("name", "")
+            description = task_data.get("description", "")
+            agent = self._agents.get("llm")
+            if agent is None:
+                agent = self._agents.get("echo")
+
+            ctx = {
+                "session_id": session_id,
+                "mode": "automatic",
+                "task": description,
+                "subtask": True,
+            }
+            try:
+                result = await agent.handle(description, ctx)
+                results.append({"name": name, "status": "ok", "output": result})
+            except Exception as exc:
+                results.append({"name": name, "status": "error", "error": str(exc)})
+
+        completed = sum(1 for r in results if r["status"] == "ok")
+        return {
+            "status": "completed" if completed == len(results) else "partial",
+            "nodes_total": len(results),
+            "nodes_completed": completed,
+            "nodes_failed": len(results) - completed,
+            "results": results,
+        }
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

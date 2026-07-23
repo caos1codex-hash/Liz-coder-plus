@@ -45,6 +45,35 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=4096, ge=1, le=131072)
 
 
+class PlanTaskRequest(BaseModel):
+    """A task within a plan execution request."""
+
+    name: str = Field(..., min_length=1)
+    description: str = Field(default="")
+    suggested_agent: str = Field(default="llm")
+    suggested_tools: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class ExecutePlanRequest(BaseModel):
+    """Request to execute a plan as an execution graph."""
+
+    tasks: list[PlanTaskRequest] = Field(..., min_length=1)
+    session_id: str = Field(default="plan-default")
+    parallel: bool = Field(default=True)
+
+
+class ExecutePlanResponse(BaseModel):
+    """Response from plan execution."""
+
+    status: str
+    nodes_total: int
+    nodes_completed: int
+    nodes_failed: int
+    duration_ms: float
+    results: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     """REST chat response model."""
 
@@ -690,6 +719,37 @@ def _find_model_manager(orch: Any) -> Any:
             return mm
 
     return None
+
+
+# ---------------------------------------------------------------------
+# Plan Execution (Sprint 6)
+# ---------------------------------------------------------------------
+
+
+@router.post("/plans/execute", response_model=ExecutePlanResponse)
+async def execute_plan(req: ExecutePlanRequest):
+    """Execute a plan using the DAG-based execution graph.
+
+    Sprint 6: Converts plan tasks into a parallel execution graph
+    with dependency tracking. Falls back to sequential execution
+    if the execution graph package is unavailable.
+    """
+    orch = get_orchestrator()
+    tasks_data = [t.model_dump() for t in req.tasks]
+
+    result = await orch.execute_plan_as_graph(
+        tasks_data,
+        session_id=req.session_id,
+    )
+
+    return ExecutePlanResponse(
+        status=result.get("status", "unknown"),
+        nodes_total=result.get("nodes_total", 0),
+        nodes_completed=result.get("nodes_completed", 0),
+        nodes_failed=result.get("nodes_failed", 0),
+        duration_ms=result.get("duration_ms", 0),
+        results=result.get("results", []),
+    )
 
 
 __all__ = ["router"]
