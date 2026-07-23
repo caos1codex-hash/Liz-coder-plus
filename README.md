@@ -2,8 +2,8 @@
 
 > Asistente IA de escritorio para Windows — interfaz en español, código en inglés.
 
-**Versión:** `v0.12.0`
-**Estado:** Sprint 6 — LLM-backed Planning, Tool-use Loop, NVIDIA NIM Integration
+**Versión:** `v0.13.0`
+**Estado:** Sprint 7 — Infrastructure, Build Fixes, Production Readiness
 
 ---
 

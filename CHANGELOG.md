@@ -2,6 +2,55 @@
 
 All notable changes to this project are documented here.
 
+## [0.13.0] — 2026-07-23 — Sprint 7: Infrastructure, Build Fixes, Production Readiness
+
+### Sprint 7 — Infraestructura, Correcciones Críticas y Preparación para Producción
+
+#### Resumen
+Sprint enfocado en estabilizar la infraestructura del proyecto, corregir bugs críticos
+de build, unificar versiones, y agregar las herramientas de CI/CD necesarias para
+desarrollo profesional.
+
+#### Correcciones Críticas de Build
+- **app.manifest** (`apps/desktop/app.manifest`) — Nuevo: archivo requerido por el .csproj
+  de WinUI 3 que estaba ausente, causando `dotnet build` fallido
+- **Root pyproject.toml** (`pyproject.toml`) — Nuevo: workspace monorepo con todas
+  las dependencias, configuración de pytest, ruff, y mypy. Resuelve TD-008
+- **pyproject.toml para tools y agents** — Nuevo: packaging metadata que faltaba
+- **.gitignore** — Actualizado: permite `apps/desktop/app.manifest` a pesar de `*.manifest`
+
+#### Unificación de Versiones (6+ versiones diferentes → 0.13.0)
+- `apps/backend/src/__init__.py`: 0.1.2 → 0.13.0
+- `apps/desktop/LizCoderPlus.Desktop.csproj`: 0.1.2 → 0.13.0
+- `apps/desktop/src/Models/AppSettings.cs`: 0.1.2 → 0.13.0
+- `config/production.json`: 0.1.2 → 0.13.0
+- `README.md`: v0.9.0 → v0.13.0
+- `pyproject.toml`: nuevo, versión 0.13.0
+
+#### Bug Fixes
+- **AppSettings.cs WebSocketUrl**: `ws://localhost:8000/ws` → `/ws/chat` (endpoint correcto)
+- **AppSettings.cs PermissionMode**: `"Confirmation"` → `"confirmation"` (lowercase, coincide con backend)
+- **production.json memory config**: Keys `database_url`/`short_term_ttl_minutes` → `path`/`max_history`
+  (coincide con MemoryConfig Pydantic model)
+- **production.json**: Agregados bloques de configuración NVIDIA, DeepSeek, Mistral
+
+#### Infraestructura
+- **Dockerfile** — Nuevo: build multi-stage para backend Python 3.11 con healthcheck
+- **docker-compose.yml** — Nuevo: orquestación del backend con volumes y variables de entorno
+- **Makefile** — Nuevo: comandos unificados (install, dev, run, test, lint, docker, clean, push)
+- **.github/workflows/ci.yml** — Nuevo: pipeline de GitHub Actions (lint, typecheck, test)
+- **data/.gitkeep** y **logs/.gitkeep** — Directorios de runtime trackeados en git
+
+#### Mejoras de API
+- **/status endpoint** mejorado: ahora retorna información detallada en tiempo real:
+  - Agentes registrados con tipos y capacidades
+  - Modelos LLM agrupados por provider con status y context windows
+  - Herramientas activas
+  - Estado del sistema de memoria
+  - Estado de componentes del pipeline (planner, context engine, recovery)
+
+---
+
 ## [0.12.0] — 2026-07-23 — Sprint 6: Tool-Use, LLM Planning, Graph Execution, Semantic Memory
 
 ### Sprint 6 — Función Calling, Planificación LLM, Ejecución en Grafo, Búsqueda Semántica

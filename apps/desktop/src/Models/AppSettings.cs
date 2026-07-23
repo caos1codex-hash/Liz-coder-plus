@@ -12,7 +12,7 @@ namespace LizCoderPlus.Desktop.Models;
 /// </summary>
 public sealed class AppSettings
 {
-    public string Version { get; init; } = "0.12.0";
+    public string Version { get; init; } = "0.13.0";
 
     public string Environment { get; init; } = "development";
 
