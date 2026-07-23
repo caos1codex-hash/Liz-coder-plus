@@ -433,50 +433,162 @@ class Orchestrator:
         mode: str = "confirmation",
         chunk_size: int = 20,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Stream an assistant response in chunks.
+        """Stream an assistant response.
 
-        The response is generated synchronously and then split into
-        word-bounded chunks to demonstrate the streaming protocol.
-        Sprint 5 will plug in real LLM streaming.
+        If an LLMAgent with a ModelManager is available and supports
+        real LLM streaming, the response is streamed token-by-token.
+        Otherwise, falls back to the word-chunk simulation.
 
         Yields:
-            Envelope dicts. The first chunk has type="chunk" with
+            Envelope dicts. Each chunk has type="chunk" with
             status="streaming"; the final envelope has type="message"
             with status="completed".
         """
-        result = await self.handle_message(message, session_id, mode=mode)
+        # Check if we have an LLMAgent with real LLM streaming.
+        llm_agent = self._agents.get("llm")
+        can_stream = (
+            llm_agent is not None
+            and hasattr(llm_agent, "_model_manager")
+            and llm_agent._model_manager is not None
+            and llm_agent._model_manager.is_initialized
+        )
 
-        if result["type"] == "error":
-            yield result
-            return
+        if can_stream:
+            async for envelope in self._stream_llm_real(
+                message, session_id, mode=mode, agent=llm_agent,
+            ):
+                yield envelope
+        else:
+            # Fallback: simulate streaming from complete response.
+            result = await self.handle_message(message, session_id, mode=mode)
 
-        full_text: str = result["content"]
-        words = full_text.split()
-        chunk: list[str] = []
-        word_count = 0
+            if result["type"] == "error":
+                yield result
+                return
 
-        for word in words:
-            chunk.append(word)
-            word_count += 1
-            if len(chunk) >= chunk_size or word_count == len(words):
-                yield {
-                    "type": "chunk",
-                    "content": " ".join(chunk),
-                    "status": "streaming",
-                    "session_id": session_id,
-                }
-                chunk = []
+            full_text: str = result["content"]
+            words = full_text.split()
+            chunk: list[str] = []
+            word_count = 0
 
-        # Final marker so the client can finalize the bubble.
-        yield {
-            "type": "message",
-            "content": full_text,
-            "status": "completed",
-            "session_id": session_id,
-            "message_id": result.get("message_id"),
-            "agent_name": result.get("agent_name"),
-            "duration_ms": result.get("duration_ms", 0),
-        }
+            for word in words:
+                chunk.append(word)
+                word_count += 1
+                if len(chunk) >= chunk_size or word_count == len(words):
+                    yield {
+                        "type": "chunk",
+                        "content": " ".join(chunk),
+                        "status": "streaming",
+                        "session_id": session_id,
+                    }
+                    chunk = []
+
+            # Final marker.
+            yield {
+                "type": "message",
+                "content": full_text,
+                "status": "completed",
+                "session_id": session_id,
+                "message_id": result.get("message_id"),
+                "agent_name": result.get("agent_name"),
+                "duration_ms": result.get("duration_ms", 0),
+            }
+
+    async def _stream_llm_real(
+        self,
+        message: str,
+        session_id: str,
+        *,
+        mode: str = "confirmation",
+        agent: Any = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream LLM response token-by-token via the LLMAgent.
+
+        Yields:
+            Chunk envelopes with real LLM tokens.
+        """
+        import time
+
+        start = time.monotonic()
+
+        # Build context.
+        self.session_manager.set_mode(session_id, mode)
+        self.session_manager.get_or_create(session_id)
+        context = self._build_context(session_id)
+        context["session_id"] = session_id
+        context["mode"] = mode
+
+        # Persist user turn.
+        await self.session_manager.append_turn(
+            session_id, role="user", content=message,
+            metadata={"mode": mode},
+        )
+
+        try:
+            from src.llm.models import LLMMessage, MessageRole
+
+            mm = agent._model_manager
+            model_id = agent._default_model or ""
+            if not model_id:
+                model_id = mm.select_provider()
+            provider = mm.get_provider(model_id)
+
+            # Build messages using agent's method.
+            messages = agent._build_messages(message, context)
+
+            full_content = ""
+            async for chunk in provider.stream(
+                messages,
+                model=model_id,
+                temperature=agent._temperature,
+                max_tokens=agent._max_tokens,
+            ):
+                if chunk.content:
+                    full_content += chunk.content
+                    yield {
+                        "type": "chunk",
+                        "content": chunk.content,
+                        "status": "streaming",
+                        "session_id": session_id,
+                        "model": chunk.model,
+                        "provider": chunk.provider,
+                    }
+                if chunk.is_final:
+                    break
+
+            duration_ms = int((time.monotonic() - start) * 1000)
+
+            # Persist assistant turn.
+            await self.session_manager.append_turn(
+                session_id,
+                role="assistant",
+                content=full_content,
+                metadata={"agent": "llm", "model": model_id},
+            )
+
+            # Final envelope.
+            history_len = len(
+                self.session_manager.history(session_id)
+            )
+            yield {
+                "type": "message",
+                "content": full_content,
+                "status": "completed",
+                "session_id": session_id,
+                "message_id": f"{session_id}:{history_len}",
+                "agent_name": "llm",
+                "model": model_id,
+                "duration_ms": duration_ms,
+            }
+
+        except Exception as exc:
+            logger.exception("LLM streaming failed for session %s", session_id)
+            yield {
+                "type": "error",
+                "content": f"Error de streaming: {exc}",
+                "status": "failed",
+                "session_id": session_id,
+            }
 
     # ------------------------------------------------------------------
     # Helpers
