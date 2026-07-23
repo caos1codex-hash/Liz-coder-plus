@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="LizCoderPlus.Desktop.Views.UpdateDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Actualizar Liz Coder Plus"
+    PrimaryButtonText="Cerrar"
+    PrimaryButtonStyle="{StaticResource ButtonStyle}"
+    Opened="OnDialogOpened">
+
+    <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" Padding="4">
+
+            <!-- Header: version info -->
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <!-- Current version badge -->
+                    <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12,8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Version Actual"
+                                       FontSize="11"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            <TextBlock x:Name="CurrentVersionText"
+                                       Text="0.13.0"
+                                       FontSize="18"
+                                       FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Arrow icon -->
+                    <FontIcon Glyph="&#xE74B;"
+                              FontSize="20"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              VerticalAlignment="Center" />
+
+                    <!-- Latest version badge -->
+                    <Border Background="{ThemeResource AccentFillColorDefaultBrush}"
+                            CornerRadius="8"
+                            Padding="12,8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Version Disponible"
+                                       FontSize="11"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="LatestVersionText"
+                                       Text="---"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="White" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Status line -->
+                <TextBlock x:Name="StatusText"
+                           Text="Presiona 'Buscar Actualizaciones' para verificar."
+                           FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Divider -->
+            <Border Height="1"
+                    Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- Action buttons row -->
+            <StackPanel Spacing="8" Orientation="Horizontal">
+                <Button x:Name="CheckButton"
+                        Content="Buscar Actualizaciones"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnCheckClick"
+                        MinWidth="180" />
+
+                <Button x:Name="DownloadButton"
+                        Content="Descargar"
+                        Click="OnDownloadClick"
+                        MinWidth="120"
+                        IsEnabled="False" />
+
+                <Button x:Name="CancelButton"
+                        Content="Cancelar"
+                        Click="OnCancelClick"
+                        MinWidth="100"
+                        IsEnabled="False"
+                        Visibility="Collapsed" />
+
+                <Button x:Name="InstallButton"
+                        Content="Instalar Ahora"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnInstallClick"
+                        MinWidth="140"
+                        IsEnabled="False"
+                        Visibility="Collapsed" />
+            </StackPanel>
+
+            <!-- Download progress bar -->
+            <ProgressBar x:Name="DownloadProgress"
+                         Minimum="0"
+                         Maximum="100"
+                         Value="0"
+                         Visibility="Collapsed"
+                         ShowError="False" />
+
+            <!-- Progress text -->
+            <TextBlock x:Name="ProgressText"
+                       Text=""
+                       FontSize="11"
+                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                       Visibility="Collapsed" />
+
+            <!-- Error block -->
+            <Border x:Name="ErrorBorder"
+                    Background="{ThemeResource SystemFillColorCriticalBrush}"
+                    CornerRadius="6"
+                    Padding="12,8"
+                    Visibility="Collapsed">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Error"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="White" />
+                    <TextBlock x:Name="ErrorText"
+                               Text=""
+                               FontSize="12"
+                               Foreground="White"
+                               TextWrapping="Wrap" />
+                    <Button Content="Cerrar error"
+                            Click="OnClearErrorClick"
+                            FontSize="11" />
+                </StackPanel>
+            </Border>
+
+            <!-- Divider -->
+            <Border Height="1"
+                    Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- Release notes section -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="Notas de la Version"
+                           FontSize="14"
+                           FontWeight="SemiBold" />
+
+                <Border Background="{ThemeResource SubtleFillColorTertiaryBrush}"
+                        CornerRadius="6"
+                        Padding="12"
+                        MaxHeight="200"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <ScrollViewer>
+                        <TextBlock x:Name="ReleaseNotesText"
+                                   Text="Las notas de la version apareceran aqui al buscar actualizaciones."
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"
+                                   IsTextSelectionEnabled="True" />
+                    </ScrollViewer>
+                </Border>
+
+                <!-- Open release page link -->
+                <HyperlinkButton x:Name="OpenReleaseLink"
+                                  Content="Ver release completo en GitHub"
+                                  Click="OnOpenReleaseClick"
+                                  Visibility="Collapsed" />
+            </StackPanel>
+
+            <!-- Auto-check info -->
+            <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                    CornerRadius="6"
+                    Padding="12,8"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="1">
+                <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE946;"
+                                  FontSize="14"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="Actualizaciones automaticas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="Liz Coder Plus verifica automaticamente nuevas versiones al iniciar. Tambien puedes buscar manualmente en cualquier momento."
+                               FontSize="11"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>
