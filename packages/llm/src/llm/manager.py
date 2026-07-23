@@ -125,7 +125,7 @@ class ModelManager:
             try:
                 await self._health_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Health task cancelled during ModelManager close")
 
         for model_id, provider in self._provider_cache.items():
             try:
@@ -211,7 +211,7 @@ class ModelManager:
                 if hasattr(provider, "close") and callable(provider.close):
                     asyncio.get_event_loop().create_task(provider.close())
             except RuntimeError:
-                pass
+                logger.debug("No running event loop to close provider for '%s'", model_id)
 
         del self._models[model_id]
 

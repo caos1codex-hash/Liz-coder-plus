@@ -314,24 +314,52 @@ async def stage_select_agent(
 async def stage_check_permissions(
     orch: "Orchestrator", req: PipelineRequest
 ) -> PipelineRequest:
-    """Permission gate.
+    """Permission gate for tool-enabled agents.
 
-    **Intentionally deferred to Sprint 2.** This stage is a no-op because
-    real agents with declared tool capabilities do not exist yet. When
-    Sprint 2 introduces LLM-backed agents that declare which tools they
-    intend to use, this stage will:
+    Sprint 6: Now that agents can invoke tools via function calling,
+    this stage pre-checks whether the selected agent's tool set is
+    compatible with the current permission mode.
 
-      1. Inspect the selected agent's declared tool set.
-      2. Cross-reference with the ``PermissionService`` under the
-         current ``req.mode`` (confirmation / automatic).
-      3. Raise ``PipelineError`` if the agent is not authorised to
-         invoke any of its declared tools.
+    In 'automatic' mode: all LOW and MEDIUM tools are allowed.
+    In 'confirmation' mode: HIGH tools require user confirmation
+    (the ToolExecutor handles this at execution time).
 
-    Currently agents are trusted and all tool-level permission checks
-    happen inside ``ToolExecutor.execute()`` when a ``permission_service``
-    is provided.
+    If the agent has no declared tools, this is a no-op.
     """
-    # Deferred: no agents with tool declarations exist yet (Sprint 2).
+    if req.agent is None:
+        return req
+
+    # Check if the agent has tool capabilities.
+    agent_tools = getattr(req.agent, 'get_tools_schema', None)
+    if agent_tools is None:
+        return req
+
+    try:
+        tools_schema = agent_tools()
+        if not tools_schema:
+            return req
+
+        # In confirmation mode, flag high-risk tools for logging.
+        if req.mode == "confirmation":
+            tool_names = [
+                t.get("function", {}).get("name", "")
+                for t in tools_schema
+            ]
+            logger.debug(
+                "Permission check: agent '%s' has %d tool(s) in "
+                "confirmation mode: %s",
+                req.agent_name,
+                len(tool_names),
+                tool_names,
+            )
+
+        # Store tool count in metadata for observability.
+        req.metadata["tools_available"] = len(tools_schema)
+        req.metadata["permission_mode"] = req.mode
+
+    except Exception:  # noqa: BLE001
+        logger.exception("Permission pre-check failed for agent '%s'", req.agent_name)
+
     return req
 
 

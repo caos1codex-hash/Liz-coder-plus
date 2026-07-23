@@ -188,7 +188,7 @@ class ParallelExecutor:
             try:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+                logger.debug("Cancelled remaining task '%s' after execution", name)
             self._scheduler.cancel(name)
 
         # Finalize result.
@@ -215,7 +215,7 @@ class ParallelExecutor:
                 durations.get(n, 0.0) for n in cp
             )
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug("Could not compute critical path for execution result")
 
         logger.info(
             "ParallelExecutor: finished in %.1fms (status=%s, "
@@ -340,7 +340,7 @@ class ParallelExecutor:
             try:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+                logger.debug("Task '%s' completed with error during batch processing", name)
             del active_tasks[name]
 
     # ------------------------------------------------------------------
@@ -359,7 +359,10 @@ class ParallelExecutor:
                     node.transition_to(ExecutionNodeState.CANCELLED)
                     self._scheduler.cancel(name)
                 except ValueError:
-                    pass
+                    logger.debug(
+                        "Could not cancel node '%s' during cancel-all",
+                        name,
+                    )
 
     def set_retry_policy(self, node_name: str, policy: RetryPolicy) -> None:
         """Set a custom retry policy for a specific node."""
