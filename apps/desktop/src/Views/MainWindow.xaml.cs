@@ -50,6 +50,9 @@ public sealed partial class MainWindow : Window
     // Backend base URL.
     private const string BackendUrl = "http://localhost:8000";
 
+    // App version for update checks.
+    private const string AppVersion = "0.13.0";
+
     public MainWindow()
     {
         this.InitializeComponent();
@@ -169,6 +172,17 @@ public sealed partial class MainWindow : Window
     private void OnConversationDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         // Placeholder: open conversation details.
+    }
+
+    // ------------------------------------------------------------------
+    // Update
+    // ------------------------------------------------------------------
+
+    private async void OnUpdateClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new UpdateDialog(AppVersion);
+        dialog.XamlRoot = this.Content.XamlRoot;
+        await dialog.ShowAsync();
     }
 
     // ------------------------------------------------------------------
