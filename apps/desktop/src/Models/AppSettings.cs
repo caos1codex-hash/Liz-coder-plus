@@ -12,7 +12,7 @@ namespace LizCoderPlus.Desktop.Models;
 /// </summary>
 public sealed class AppSettings
 {
-    public string Version { get; init; } = "0.1.2";
+    public string Version { get; init; } = "0.12.0";
 
     public string Environment { get; init; } = "development";
 
@@ -28,7 +28,7 @@ public sealed class BackendSettings
 {
     public string HttpUrl { get; init; } = "http://localhost:8000";
 
-    public string WebSocketUrl { get; init; } = "ws://localhost:8000/ws";
+    public string WebSocketUrl { get; init; } = "ws://localhost:8000/ws/chat";
 
     public int TimeoutSeconds { get; init; } = 30;
 }
@@ -41,7 +41,7 @@ public sealed class PermissionSettings
     /// <summary>
     /// Permission mode: "Confirmation" or "Automatic".
     /// </summary>
-    public string Mode { get; init; } = "Confirmation";
+    public string Mode { get; init; } = "confirmation";
 
     /// <summary>
     /// Whitelisted commands that can run automatically.

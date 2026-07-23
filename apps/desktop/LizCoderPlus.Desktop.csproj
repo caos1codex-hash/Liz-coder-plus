@@ -18,7 +18,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.2</Version>
+    <Version>0.12.0</Version>
     <Company>Liz Coder Plus</Company>
     <Product>Liz Coder Plus Desktop</Product>
     <Description>Desktop AI Assistant for Windows</Description>
