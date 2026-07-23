@@ -8,7 +8,9 @@
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using LizCoderPlus.Desktop.Services;
@@ -29,6 +31,7 @@ public sealed partial class MainWindow : Window
 {
     private readonly ChatService _chat;
     private readonly DispatcherQueue _dispatcher;
+    private readonly HttpClient _httpClient = new();
     private readonly ObservableCollection<UiMessage> _messages = new();
 
     // Pending streamed content for the current assistant bubble.
@@ -36,6 +39,12 @@ public sealed partial class MainWindow : Window
 
     // Permission mode tracking.
     private string _currentMode = "confirmation";
+
+    // Selected model for chat.
+    private string _selectedModel = "auto";
+
+    // Backend base URL.
+    private const string BackendUrl = "http://localhost:8000";
 
     public MainWindow()
     {
@@ -59,6 +68,10 @@ public sealed partial class MainWindow : Window
         try
         {
             await _chat.ConnectAsync();
+
+            // After connecting, fetch available models and agent status.
+            _ = FetchAvailableModelsAsync();
+            _ = FetchAgentStatusAsync();
         }
         catch (Exception ex)
         {
@@ -288,6 +301,106 @@ public sealed partial class MainWindow : Window
         {
             StatusBorder.Background = new SolidColorBrush(
                 Microsoft.UI.Colors.Gray);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Model selection
+    // ------------------------------------------------------------------
+
+    private void OnModelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ModelSelector.SelectedItem is ComboBoxItem item)
+        {
+            _selectedModel = item.Tag?.ToString() ?? "auto";
+        }
+    }
+
+    /// <summary>
+    /// Fetches the list of available models from the backend API
+    /// and populates the model selector ComboBox.
+    /// </summary>
+    private async Task FetchAvailableModelsAsync()
+    {
+        try
+        {
+            var response = await _httpClient.GetStringAsync(
+                $"{BackendUrl}/api/models");
+
+            using var doc = JsonDocument.Parse(response);
+            var models = doc.RootElement.GetProperty("models");
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                // Keep the "Auto" item.
+                ModelSelector.Items.Clear();
+                ModelSelector.Items.Add(new ComboBoxItem
+                {
+                    Content = "Auto (por defecto)",
+                    Tag = "auto",
+                });
+
+                foreach (var model in models.EnumerateArray())
+                {
+                    var modelId = model.GetProperty("id").GetString() ?? "";
+                    var provider = model.GetProperty("provider").GetString() ?? "";
+                    var displayName = modelId.Contains('/')
+                        ? modelId.Split('/').Last()
+                        : modelId;
+
+                    ModelSelector.Items.Add(new ComboBoxItem
+                    {
+                        Content = $"{displayName} ({provider})",
+                        Tag = modelId,
+                    });
+                }
+
+                ModelSelector.SelectedIndex = 0;
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.TryEnqueue(() =>
+            {
+                AgentStatusText.Text = $"Modelos: N/A";
+            });
+        }
+    }
+
+    /// <summary>
+    /// Fetches the multiagent status from the backend API
+    /// and updates the agent status indicator.
+    /// </summary>
+    private async Task FetchAgentStatusAsync()
+    {
+        try
+        {
+            var response = await _httpClient.GetStringAsync(
+                $"{BackendUrl}/api/multiagent/status");
+
+            using var doc = JsonDocument.Parse(response);
+            var status = doc.RootElement.GetProperty("status").GetString();
+            var agentsCount = doc.RootElement.GetProperty("agents_count").GetInt32();
+
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (status == "active")
+                {
+                    AgentStatusText.Text = $"{agentsCount} agentes activos";
+                    AgentStatusIcon.Foreground = new SolidColorBrush(
+                        Microsoft.UI.Colors.Green);
+                }
+                else
+                {
+                    AgentStatusText.Text = "Multiagent: inactivo";
+                    AgentStatusIcon.Foreground = new SolidColorBrush(
+                        Microsoft.UI.Colors.Gray);
+                }
+            });
+        }
+        catch
+        {
+            // Silently ignore if the endpoint isn't available yet.
         }
     }
 
