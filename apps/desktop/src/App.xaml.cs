@@ -6,6 +6,7 @@
 // ============================================================
 
 using LizCoderPlus.Desktop.Views;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace LizCoderPlus.Desktop;
@@ -17,6 +18,17 @@ namespace LizCoderPlus.Desktop;
 public partial class App : Application
 {
     private MainWindow? _mainWindow;
+
+    /// <summary>
+    /// Provides thread-safe access to the UI DispatcherQueue
+    /// for ViewModels and services that need to update the UI.
+    /// </summary>
+    public static DispatcherQueue DispatcherQueue { get; private set; } = null!;
+
+    /// <summary>
+    /// Current application version string.
+    /// </summary>
+    public static string Version { get; } = "0.13.0";
 
     /// <summary>
     /// Initializes the application and configures the DI container.
@@ -32,6 +44,8 @@ public partial class App : Application
     /// <param name="args">Event arguments.</param>
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        DispatcherQueue = DispatcherQueue.GetForCurrentThread()!;
+
         _mainWindow = new MainWindow();
         _mainWindow.Activate();
     }
