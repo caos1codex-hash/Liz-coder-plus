@@ -2,7 +2,76 @@
 
 All notable changes to this project are documented here.
 
-## [0.11.0] — 2026-07-23 — Sprint 5: Multi-Provider LLM Integration
+## [0.12.0] — 2026-07-23 — Sprint 6: Tool-Use, LLM Planning, Graph Execution, Semantic Memory
+
+### Sprint 6 — Función Calling, Planificación LLM, Ejecución en Grafo, Búsqueda Semántica
+
+#### Resumen
+Sprint más significativo desde la fundación del proyecto: el agente LLM ahora puede
+invocar herramientas (terminal, archivos, web, código) durante la conversación mediante
+function calling compatible con OpenAI. El planner usa LLM para descomponer tareas
+complejas. Los planes se ejecutan en paralelo mediante grafos DAG. La memoria ahora
+soporta búsqueda semántica con embeddings.
+
+#### Tool-Use Loop con Function Calling
+- **LLMAgent** (`packages/core/src/llm_agent.py`)
+  - Loop completo de function calling: envía herramientas al LLM → ejecuta → retorna resultado
+  - Máximo 10 iteraciones (MAX_TOOL_ROUNDS) para prevenir loops infinitos
+  - Fallback automático a LLM sin herramientas si falla el loop
+  - `get_tools_schema()` genera esquemas OpenAI-compatible desde herramientas registradas
+  - `_execute_tool()` ejecuta herramientas vía ToolExecutor con permisos
+
+- **LLMResponse** (`packages/llm/src/llm/models.py`)
+  - Nuevo campo `tool_calls: list[dict]` en la respuesta LLM
+  - Soporte para id, name, arguments en cada tool call
+
+- **NVIDIA Provider** (`packages/llm/src/llm/providers/nvidia.py`)
+  - Parseo de `tool_calls` desde respuestas de la API
+  - Los modelos NVIDIA con function_calling=true ahora pueden invocar herramientas
+
+- **OpenAI Provider** (`packages/llm/src/llm/providers/openai.py`)
+  - Parseo de `tool_calls` desde respuestas de la API
+
+- **Backend** (`apps/backend/src/api/main.py`)
+  - Registro automático de 5 herramientas: terminal, file, system, code_execution, web_search
+  - `ToolBridge` conecta ToolExecutor con las herramientas del Orchestrator
+  - LLMAgent recibe tool_executor en la inicialización
+
+#### Planner Basado en LLM
+- **Planner** (`packages/core/src/planner.py`)
+  - Modo dual: LLM cuando ModelManager está disponible, heuristic (regex) como fallback
+  - `_build_plan_llm_async()` usa LLM para descomponer tareas en sub-tareas JSON
+  - Soporta cualquier idioma (no solo español como el heuristic)
+  - Temperatura baja (0.3) para output estructurado
+  - `attach_model_manager()` para conectar el ModelManager
+
+#### Execution Graph Integrado
+- **Orchestrator** (`packages/core/src/orchestrator.py`)
+  - `execute_plan_as_graph()` convierte planes en DAG y ejecuta en paralelo
+  - `_execute_plan_sequential()` como fallback cuando el graph no está disponible
+  - Cada nodo usa el agente LLM para ejecutar la subtarea
+
+- **API** (`apps/backend/src/api/management_routes.py`)
+  - `POST /api/plans/execute` endpoint REST para ejecución de planes
+  - Modelos: `PlanTaskRequest`, `ExecutePlanRequest`, `ExecutePlanResponse`
+
+#### Búsqueda Semántica en Memoria
+- **MemoryManager** (`packages/memory/src/memory/manager.py`)
+  - `search_semantic()` busca en historial usando cosine similarity
+  - `set_embedding_fn()` permite conectar un proveedor de embeddings
+  - `_cosine_similarity()` con umbred configurable (default 0.5)
+  - Fallback a búsqueda por keywords si no hay función de embeddings
+
+#### Permisiones Implementadas
+- **Pipeline** (`packages/core/src/pipeline.py`)
+  - `stage_check_permissions` ahora inspecciona las herramientas del agente
+  - Logging de herramientas en modo confirmación para auditoría
+  - Metadata con `tools_available` y `permission_mode`
+
+#### Fixes
+- **parallel_executor.py**: 4 bare `pass` reemplazados con `logger.debug`
+- **llm/manager.py**: 2 bare `pass` reemplazados con `logger.debug`
+- Todas las excepciones silenciadas ahora tienen logging apropiado
 
 ### Sprint 5 — Proveedores LLM, REST API, Streaming Real, Desktop Enhancement
 
