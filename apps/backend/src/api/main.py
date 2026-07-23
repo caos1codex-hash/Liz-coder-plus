@@ -594,21 +594,91 @@ async def health() -> dict[str, str]:
 
 @app.get("/status", tags=["system"])
 async def status() -> dict[str, object]:
-    """Status endpoint with environment information.
+    """Detailed system status endpoint.
 
-    Returns:
-        A dictionary describing the current runtime status, including
-        the number of active WebSocket connections and memory sessions.
+    Returns real-time information about:
+    - Service version and sprint stage
+    - WebSocket connections and sessions
+    - Registered agents with capabilities
+    - Available LLM models grouped by provider
+    - Active tools
+    - Memory system status
+    - Planning and context engine status
     """
-    ws = get_ws_manager()
     orch = get_orchestrator()
+    ws = get_ws_manager()
+
+    # Build agent info.
+    agent_info = []
+    for name in orch.router.agent_names:
+        agent = orch.router.get_agent(name)
+        if agent is not None:
+            agent_info.append({
+                "name": name,
+                "type": type(agent).__name__,
+                "capabilities": getattr(agent, "capabilities", []),
+            })
+        else:
+            agent_info.append({"name": name, "type": "unknown"})
+
+    # Build model info from ModelManager if available.
+    model_info: list[dict[str, object]] = []
+    llm_agent = orch._agents.get("llm")
+    if llm_agent and hasattr(llm_agent, "model_manager") and llm_agent.model_manager:
+        mm = llm_agent.model_manager
+        models_by_provider: dict[str, list[dict[str, str]]] = {}
+        for m in mm.list_models():
+            provider = m.provider.value
+            if provider not in models_by_provider:
+                models_by_provider[provider] = []
+            models_by_provider[provider].append({
+                "id": m.model_id,
+                "status": m.status.value,
+                "ctx_window": str(m.capabilities.context_window),
+            })
+        for provider, models in sorted(models_by_provider.items()):
+            model_info.append({
+                "provider": provider,
+                "models": models,
+                "default": mm.default_model,
+            })
+
+    # Build tool info.
+    tool_names = list(orch._tools.keys()) if hasattr(orch, "_tools") else []
+
+    # Memory info.
+    memory_status = "disabled"
+    memory_sessions = 0
+    if orch._memory is not None and orch._memory.is_initialized:
+        memory_status = "active"
+        memory_sessions = len(orch._memory._cache)
+
+    # Planner / ContextEngine status.
+    planner_status = "attached" if getattr(orch, "_planner", None) else "none"
+    context_engine_status = "attached" if getattr(orch, "_context_engine", None) else "none"
+    plan_executor_status = "attached" if getattr(orch, "_plan_executor", None) else "none"
+    recovery_status = "attached" if getattr(orch, "_recovery", None) else "none"
+
     return {
         "service": "liz-coder-plus-backend",
         "version": __version__,
-        "stage": "Sprint 4 - Full System Integration",
+        "stage": "Sprint 7 - System Hardening & Production Readiness",
         "state": "operational",
-        "ws_connections": ws.connection_count,
-        "ws_sessions": ws.list_sessions(),
-        "memory_sessions": orch.session_manager.session_count,
-        "agents": orch.router.agent_names,
+        "websocket": {
+            "connections": ws.connection_count,
+            "sessions": ws.list_sessions(),
+        },
+        "memory": {
+            "status": memory_status,
+            "sessions_in_cache": memory_sessions,
+        },
+        "agents": agent_info,
+        "models": model_info,
+        "tools": tool_names,
+        "pipeline": {
+            "planner": planner_status,
+            "context_engine": context_engine_status,
+            "plan_executor": plan_executor_status,
+            "recovery": recovery_status,
+        },
     }
