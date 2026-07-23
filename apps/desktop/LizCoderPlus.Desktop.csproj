@@ -16,6 +16,8 @@
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <Version>0.13.0</Version>
@@ -27,8 +29,8 @@
     <AssemblyTitle>LizCoderPlus.Desktop</AssemblyTitle>
     <AssemblyProduct>Liz Coder Plus</AssemblyProduct>
 
-    <!-- Single-file publish settings -->
-    <PublishSingleFile>true</PublishSingleFile>
+    <!-- Publish settings (only applied during dotnet publish, not build) -->
+    <PublishSingleFile>false</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
