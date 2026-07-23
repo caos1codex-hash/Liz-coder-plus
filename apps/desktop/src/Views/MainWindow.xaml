@@ -95,11 +95,19 @@
                     CornerRadius="6"
                     Padding="8,4"
                     Margin="0,8,0,4">
-                <TextBlock x:Name="SidebarStatusText"
-                           Text="Desconectado"
-                           FontSize="11"
-                           FontWeight="Medium"
-                           Foreground="White" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon x:Name="StatusDot"
+                              Glyph="&#xE783;"
+                              FontSize="12"
+                              Foreground="White"
+                              VerticalAlignment="Center" />
+                    <TextBlock x:Name="SidebarStatusText"
+                               Text="Desconectado"
+                               FontSize="11"
+                               FontWeight="Medium"
+                               Foreground="White"
+                               VerticalAlignment="Center" />
+                </StackPanel>
             </Border>
 
             <!-- Settings button -->
@@ -108,6 +116,17 @@
                     Click="OnSettingsClick"
                     HorizontalAlignment="Stretch"
                     Margin="0,2,0,0" />
+
+            <!-- Update button -->
+            <Button Grid.Row="4"
+                    Content="Buscar Actualizaciones"
+                    Click="OnUpdateClick"
+                    HorizontalAlignment="Stretch"
+                    Margin="0,2,0,0">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="F5" />
+                </Button.KeyboardAccelerators>
+            </Button>
         </Grid>
 
         <!-- Grid splitter -->
@@ -225,6 +244,22 @@
                         Content="Limpiar"
                         Click="OnClearClick"
                         FontSize="12" />
+
+                <!-- Update indicator (in toolbar) -->
+                <Button Grid.Column="6"
+                        x:Name="ToolbarUpdateBtn"
+                        Click="OnUpdateClick"
+                        FontSize="12"
+                        Padding="8,4"
+                        Margin="8,0,0,0"
+                        ToolTipService.ToolTip="Buscar actualizaciones (F5)">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <FontIcon Glyph="&#xE896;"
+                                  FontSize="12"
+                                  VerticalAlignment="Center" />
+                        <TextBlock Text="Actualizar" />
+                    </StackPanel>
+                </Button>
             </Grid>
 
             <!-- Messages area -->
