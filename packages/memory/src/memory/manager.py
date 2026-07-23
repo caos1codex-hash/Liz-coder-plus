@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.memory.database import DatabaseManager
 from src.memory.repositories.conversation_repository import ConversationRepository
+from src.memory.knowledge import KnowledgeMemory
 
 if TYPE_CHECKING:
     from src.memory.repositories.execution_repository import ExecutionRepository
@@ -61,6 +62,7 @@ class MemoryManager:
         self._workflow_repo: Any | None = None
         self._execution_repo: Any | None = None
         self._embedding_fn = embedding_fn  # Sprint 6: callable(text) -> list[float]
+        self._knowledge = KnowledgeMemory()  # Sprint 8: long-term knowledge
 
         logger.info("MemoryManager created (max_history=%d)", max_history)
 
@@ -124,6 +126,11 @@ class MemoryManager:
     def execution_repository(self) -> Any | None:
         """ExecutionRepository, available after ``initialize_task_persistence()``."""
         return self._execution_repo
+
+    @property
+    def knowledge(self) -> KnowledgeMemory:
+        """Long-term knowledge memory store (Sprint 8)."""
+        return self._knowledge
 
     async def initialize_task_persistence(self) -> None:
         """Run the sprint 1.8 tasks/workflows migration and create repos.
