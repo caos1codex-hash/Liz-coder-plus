@@ -32,6 +32,26 @@
     "mistral": {
       "base_url": "https://api.mistral.ai/v1",
       "api_key_env": "MISTRAL_API_KEY"
+    },
+    "glm": {
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "GLM_API_KEY",
+      "priority_models": [
+        "glm-4-plus",
+        "glm-4-long",
+        "glm-4-flash",
+        "glm-4-air"
+      ]
+    },
+    "qwen": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "QWEN_API_KEY",
+      "priority_models": [
+        "qwen-max",
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen-long"
+      ]
     }
   },
   "permissions": {
