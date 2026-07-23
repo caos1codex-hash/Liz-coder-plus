@@ -111,6 +111,46 @@
                 </StackPanel>
             </Border>
 
+            <!-- Model selector -->
+            <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="2">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE945;"
+                              FontSize="14"
+                              VerticalAlignment="Center"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <ComboBox x:Name="ModelSelector"
+                              SelectedIndex="0"
+                              FontSize="12"
+                              MinWidth="200"
+                              SelectionChanged="OnModelSelectionChanged">
+                        <ComboBoxItem Content="Auto (por defecto)" Tag="auto" />
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <!-- Agent status indicator -->
+            <Border x:Name="AgentStatusBorder"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="8,4">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon x:Name="AgentStatusIcon"
+                              Glyph="&#xE783;"
+                              FontSize="14"
+                              VerticalAlignment="Center"
+                              Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <TextBlock x:Name="AgentStatusText"
+                               Text="7 agentes"
+                               FontSize="12"
+                               VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+
             <!-- Clear -->
             <Button x:Name="ClearBtn"
                     Content="Limpiar Chat"
