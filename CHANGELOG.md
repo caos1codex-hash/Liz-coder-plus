@@ -2,6 +2,92 @@
 
 All notable changes to this project are documented here.
 
+## [0.11.0] — 2026-07-23 — Sprint 5: Multi-Provider LLM Integration
+
+### Sprint 5 — Proveedores LLM, REST API, Streaming Real, Desktop Enhancement
+
+#### Resumen
+Integración de múltiples proveedores LLM con auto-descubrimiento de modelos,
+endpoints REST para chat y gestión, streaming real token-by-token vía WebSocket,
+nuevas herramientas (búsqueda web, ejecución de código), y mejora significativa
+de la aplicación desktop WinUI 3.
+
+#### Nuevos Proveedores LLM
+- **NVIDIA NIM** (`packages/llm/src/llm/providers/nvidia.py`)
+  - API compatible con OpenAI en `integrate.api.nvidia.com/v1`
+  - Auto-descubrimiento de modelos free via `/models` endpoint
+  - Lista de prioridad: Llama 3.1 405B, Mistral Large, Qwen 72B, etc.
+  - Capabilities predefinidas para 16+ modelos conocidos
+  - Fallback a modelos hardcodeados si el discovery falla
+
+- **DeepSeek** (`packages/llm/src/llm/providers/deepseek.py`)
+  - Modelos: `deepseek-chat`, `deepseek-reasoner`, `deepseek-coder`
+  - API compatible con OpenAI en `api.deepseek.com/v1`
+
+- **Mistral AI** (`packages/llm/src/llm/providers/mistral.py`)
+  - Modelos: `mistral-large-latest`, `codestral-latest`, `pixtral-large-latest`, etc.
+  - Capabilities predefinidas para 8+ modelos conocidos
+
+#### Cambios en Modelos y Manager
+- `ModelProvider` enum extendido con `NVIDIA`, `DEEPSEEK`, `MISTRAL`
+- `ModelManager._PROVIDER_CLASS_MAP` actualizado con 8 proveedores
+- `providers/__init__.py` exporta todos los proveedores
+
+#### Backend — Inicialización
+- `apps/backend/src/api/main.py` — `_initialize_llm()` mejorado:
+  - Registro automático de modelos NVIDIA NIM con discovery
+  - Registro de modelos DeepSeek si `DEEPSEEK_API_KEY` está configurada
+  - Registro de modelos Mistral si `MISTRAL_API_KEY` está configurada
+  - Priority list de modelos NVIDIA free optimizada
+
+#### Nuevos Endpoints REST
+- `POST /api/chat` — Chat completo vía REST (pipeline full)
+- `POST /api/chat/complete` — Completión directa LLM (sin pipeline)
+- `GET /api/models/discover` — Descubrir modelos disponibles de todos los providers
+- `ChatRequest` / `ChatResponse` models con Pydantic
+
+#### Streaming Real LLM
+- `Orchestrator.stream_message()` — Streaming token-by-token cuando LLMAgent está disponible
+- `_stream_llm_real()` — Nuevo método que usa `provider.stream()` del LLM
+- Fallback a word-chunk simulation cuando no hay LLM configurado
+- Includes model/provider info en cada chunk envelope
+- Persistencia de user y assistant turns durante streaming
+
+#### Nuevas Herramientas
+- **WebSearchTool** (`packages/tools/src/tools/web_search_tool.py`)
+  - Búsqueda web via DuckDuckGo Lite (no requiere API key)
+  - Fetch de URLs con limpieza de HTML
+  - LOW permission level
+- **CodeExecutionTool** (`packages/tools/src/tools/code_execution_tool.py`)
+  - Ejecución de Python en subprocess sandboxed
+  - Timeout configurable (default 30s, max 60s)
+  - HIGH permission level
+  - Restricción de red en el entorno de ejecución
+
+#### Desktop WinUI 3
+- `ChatViewModel.cs` — Full MVVM con CommunityToolkit.Mvvm
+  - RelayCommand para Connect, Disconnect, Send, ToggleMode, ClearChat
+  - Streaming support con append-to-last-message
+  - INotifyPropertyChanged para data binding reactiva
+- `MainWindow.xaml` — UI profesional:
+  - Header con branding, status badge, controles de conexión
+  - Toolbar con toggle de modo (Confirmar/Automático) y Limpiar
+  - Área de mensajes con DataTemplate
+  - Input area con TextBox + Button
+- `MainWindow.xaml.cs` — Full code-behind:
+  - Color-coded status badges (verde/naranja/rojo/gris)
+  - Connection state tracking
+  - Permission mode toggle
+  - Auto-scroll en messages
+
+#### Configuración
+- `config/development.json` actualizado:
+  - Provider default: `nvidia`
+  - Model default: `meta/llama-3.1-405b-instruct`
+  - Secciones `nvidia`, `deepseek`, `mistral` con URLs y env vars
+  - Model roles: coding (deepseek-coder), reasoning (deepseek-reasoner)
+- `.env.example` — Documentación de todas las variables de entorno
+
 ## [0.10.0] — 2026-07-17 — Sprint 4.2
 
 ### Sprint 4.2 — Tool Intelligence: Tool Selection Engine
