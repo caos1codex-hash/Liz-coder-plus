@@ -1,0 +1,222 @@
+# ============================================================
+# GitHub Actions Workflow: Build & Release Desktop .exe
+# Triggers on version tag push (v*.*.*)
+# Builds WinUI 3 app, creates .exe, uploads to GitHub Release
+# ============================================================
+
+name: Build Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # e.g. v0.14.0
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 0.14.0)'
+        required: true
+        default: '0.13.0'
+      prerelease:
+        description: 'Mark as prerelease'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_DIR: apps/desktop
+  CONFIGURATION: Release
+
+jobs:
+  build-windows:
+    name: Build Windows Desktop .exe
+    runs-on: windows-latest
+
+    steps:
+      # --- Checkout ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Extract version ---
+      - name: Extract version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $ver = "${{ github.event.inputs.version }}"
+          } else {
+            $ver = "${{ github.ref_name }}".TrimStart('v')
+          }
+          echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
+          echo "Building version: $ver"
+
+      # --- Setup .NET ---
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # --- Install Windows App SDK workload ---
+      - name: Install Windows App SDK workload
+        run: dotnet workload install wasm-tools
+        continue-on-error: true
+
+      # --- Restore NuGet packages ---
+      - name: Restore NuGet packages
+        run: dotnet restore ${{ env.PROJECT_DIR }}/LizCoderPlus.Desktop.csproj
+
+      # --- Build for win-x64 ---
+      - name: Build win-x64 self-contained
+        run: |
+          dotnet publish ${{ env.PROJECT_DIR }}/LizCoderPlus.Desktop.csproj `
+            -c ${{ env.CONFIGURATION }} `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            -p:EnableCompressionInSingleFile=true `
+            -p:Version=${{ steps.version.outputs.VERSION }} `
+            -p:ApplicationVersion=${{ steps.version.outputs.VERSION }} `
+            -o dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64
+
+      # --- Build for win-arm64 ---
+      - name: Build win-arm64 self-contained
+        run: |
+          dotnet publish ${{ env.PROJECT_DIR }}/LizCoderPlus.Desktop.csproj `
+            -c ${{ env.CONFIGURATION }} `
+            -r win-arm64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            -p:EnableCompressionInSingleFile=true `
+            -p:Version=${{ steps.version.outputs.VERSION }} `
+            -p:ApplicationVersion=${{ steps.version.outputs.VERSION }} `
+            -o dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64
+
+      # --- Create ZIP archives ---
+      - name: Create ZIP archives
+        shell: pwsh
+        run: |
+          # win-x64
+          Compress-Archive -Path dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64/* `
+            -DestinationPath dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64.zip -Force
+
+          # win-arm64
+          Compress-Archive -Path dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64/* `
+            -DestinationPath dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64.zip -Force
+
+          # List artifacts
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            $size = [math]::Round($_.Length / 1MB, 2)
+            echo "Created: $($_.Name) ($size MB)"
+          }
+
+      # --- Upload artifacts ---
+      - name: Upload win-x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64
+          path: dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64.zip
+          retention-days: 30
+
+      - name: Upload win-arm64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64
+          path: dist/LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64.zip
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # --- Checkout ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Extract version ---
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      # --- Download artifacts ---
+      - name: Download win-x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-x64
+          path: dist/
+
+      - name: Download win-arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LizCoderPlus-${{ steps.version.outputs.VERSION }}-win-arm64
+          path: dist/
+
+      # --- List downloaded files ---
+      - name: List files
+        run: ls -lh dist/
+
+      # --- Create or update GitHub Release ---
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TAG="v${VERSION}"
+
+          # Build release notes
+          NOTES="## Liz Coder Plus v${VERSION}
+
+          ### Download
+          - **Windows x64**: \`LizCoderPlus-${VERSION}-win-x64.zip\`
+          - **Windows ARM64**: \`LizCoderPlus-${VERSION}-win-arm64.zip\`
+
+          ### Instalacion
+          1. Descarga el ZIP correspondiente a tu sistema
+          2. Extrae el contenido
+          3. Ejecuta \`LizCoderPlus.Desktop.exe\`
+          4. La app incluye actualizacion automatica via GitHub
+
+          ### Auto-Update
+          La aplicacion verifica automaticamente nuevas versiones.
+          Tambien puedes presionar F5 o 'Buscar Actualizaciones'.
+
+          ---
+          Generado automaticamente por GitHub Actions."
+
+          # Check if release exists
+          if gh release view "$TAG" --repo ${{ github.repository }} 2>/dev/null; then
+            echo "Release $TAG already exists, uploading assets..."
+            gh release upload "$TAG" dist/*.zip --repo ${{ github.repository }} --clobber
+          else
+            echo "Creating release $TAG..."
+            PRERELEASE_FLAG=""
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
+              PRERELEASE_FLAG="--prerelease"
+            fi
+
+            gh release create "$TAG" \
+              dist/*.zip \
+              --repo ${{ github.repository }} \
+              --title "Liz Coder Plus v${VERSION}" \
+              --notes "$NOTES" \
+              $PRERELEASE_FLAG
+          fi
+
+          echo ""
+          echo "============================================"
+          echo "  Release $TAG created successfully!"
+          echo "  Assets uploaded to GitHub Releases."
+          echo "============================================"
