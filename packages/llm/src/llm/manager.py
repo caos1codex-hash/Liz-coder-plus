@@ -39,6 +39,8 @@ _PROVIDER_CLASS_MAP: dict[ModelProvider, tuple[str, str]] = {
     ModelProvider.NVIDIA: ("src.llm.providers.nvidia", "NvidiaProvider"),
     ModelProvider.DEEPSEEK: ("src.llm.providers.deepseek", "DeepSeekProvider"),
     ModelProvider.MISTRAL: ("src.llm.providers.mistral", "MistralProvider"),
+    ModelProvider.GLM: ("src.llm.providers.glm", "GlmProvider"),
+    ModelProvider.QWEN: ("src.llm.providers.qwen", "QwenProvider"),
 }
 
 
