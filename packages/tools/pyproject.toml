@@ -1,0 +1,13 @@
+[project]
+name = "liz-tools"
+version = "0.1.0"
+description = "Tool management system for Liz Coder Plus — registry, selection, execution, permissions"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

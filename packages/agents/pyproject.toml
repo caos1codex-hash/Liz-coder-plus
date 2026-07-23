@@ -1,0 +1,13 @@
+[project]
+name = "liz-agents"
+version = "0.1.0"
+description = "Base agent system for Liz Coder Plus — lifecycle, registry, protocols"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
