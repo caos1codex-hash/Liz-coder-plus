@@ -339,6 +339,7 @@ async def _initialize_llm(orchestrator: object) -> None:
             from src.tools.system_tool import SystemTool  # type: ignore[import-untyped]
             from src.tools.code_execution_tool import CodeExecutionTool  # type: ignore[import-untyped]
             from src.tools.web_search_tool import WebSearchTool  # type: ignore[import-untyped]
+            from src.tools.file_search_tool import FileSearchTool  # type: ignore[import-untyped]
 
             tool_classes = [
                 TerminalTool,
@@ -346,6 +347,7 @@ async def _initialize_llm(orchestrator: object) -> None:
                 SystemTool,
                 CodeExecutionTool,
                 WebSearchTool,
+                FileSearchTool,
             ]
             for tool_cls in tool_classes:
                 try:
