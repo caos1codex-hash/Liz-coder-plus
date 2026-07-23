@@ -19,9 +19,24 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <Version>0.13.0</Version>
+    <ApplicationVersion>0.13.0</ApplicationVersion>
     <Company>Liz Coder Plus</Company>
     <Product>Liz Coder Plus Desktop</Product>
-    <Description>Desktop AI Assistant for Windows</Description>
+    <Description>Sistema Operativo de IA Personal - Asistente de Escritorio con Multi-Agentes</Description>
+    <Copyright>2024 Liz Coder Plus - MIT License</Copyright>
+    <AssemblyTitle>LizCoderPlus.Desktop</AssemblyTitle>
+    <AssemblyProduct>Liz Coder Plus</AssemblyProduct>
+    <StartupObject>LizCoderPlus.Desktop.App</StartupObject>
+
+    <!-- Single-file publish settings -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SelfContained>true</SelfContained>
+
+    <!-- App icon metadata -->
+    <ApplicationIcon></ApplicationIcon>
+    <PackageId>LizCoderPlus.Desktop</PackageId>
   </PropertyGroup>
 
   <!-- NuGet Packages -->
