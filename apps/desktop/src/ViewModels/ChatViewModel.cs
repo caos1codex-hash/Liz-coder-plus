@@ -5,8 +5,10 @@
 // Sprint: 5 — Full WebSocket integration with streaming.
 // ============================================================
 
+using System;
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LizCoderPlus.Desktop.Services;
@@ -66,7 +68,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     // ------------------------------------------------------------------
 
     [RelayCommand]
-    private async Task ConnectAsync()
+    private async Task Connect()
     {
         try
         {
@@ -79,7 +81,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task DisconnectAsync()
+    private async Task Disconnect()
     {
         await _chatService.DisconnectAsync();
     }
@@ -88,7 +90,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     /// Sends the current message to the backend.
     /// </summary>
     [RelayCommand]
-    private async Task SendAsync()
+    private async Task Send()
     {
         if (string.IsNullOrWhiteSpace(CurrentMessage))
         {

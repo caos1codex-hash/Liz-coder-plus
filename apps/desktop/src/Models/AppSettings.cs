@@ -5,6 +5,8 @@
 // Sprint: 1 - Prompt 1 (Foundation)
 // ============================================================
 
+using System.Collections.Generic;
+
 namespace LizCoderPlus.Desktop.Models;
 
 /// <summary>

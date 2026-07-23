@@ -6,6 +6,7 @@
 // ============================================================
 
 using System;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -74,7 +75,7 @@ public sealed partial class UpdateViewModel : ObservableObject, IDisposable
 
     /// <summary>Check GitHub for a newer version.</summary>
     [RelayCommand]
-    private async Task CheckForUpdatesAsync()
+    private async Task CheckForUpdates()
     {
         IsChecking = true;
         UpdateStatus = "Verificando actualizaciones...";
@@ -90,7 +91,7 @@ public sealed partial class UpdateViewModel : ObservableObject, IDisposable
 
     /// <summary>Download the available update.</summary>
     [RelayCommand]
-    private async Task DownloadUpdateAsync()
+    private async Task DownloadUpdate()
     {
         IsDownloading = true;
         UpdateStatus = "Iniciando descarga...";

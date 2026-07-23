@@ -5,6 +5,9 @@
 // Sprint: 1 - Prompt 1 (Foundation stub)
 // ============================================================
 
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace LizCoderPlus.Desktop.Services;
 
 /// <summary>
