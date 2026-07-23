@@ -6,52 +6,158 @@
     xmlns:local="using:LizCoderPlus.Desktop.Views"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    Title="Liz Coder Plus — AI Desktop Assistant">
 
     <Grid Padding="16" RowSpacing="8">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="Liz Coder Plus"
-                       FontSize="20"
-                       FontWeight="SemiBold"
-                       VerticalAlignment="Center" />
-            <Border Background="{ThemeResource AccentFillColorDefaultBrush}"
+        <!-- Header with branding and status -->
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Logo / Title -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                <Border Background="{ThemeResource AccentFillColorDefaultBrush}"
+                        CornerRadius="12"
+                        Width="32" Height="32">
+                    <TextBlock Text="L"
+                               FontSize="18"
+                               FontWeight="Bold"
+                               Foreground="White"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </Border>
+                <TextBlock Text="Liz Coder Plus"
+                           FontSize="20"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Session info -->
+            <TextBlock Grid.Column="1"
+                       x:Name="SessionInfo"
+                       Text=""
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       VerticalAlignment="Center"
+                       HorizontalAlignment="Center" />
+
+            <!-- Connection controls -->
+            <Button Grid.Column="2"
+                    x:Name="ConnectBtn"
+                    Content="Conectar"
+                    Click="OnConnectClick"
+                    Style="{StaticResource AccentButtonStyle}"
+                    FontSize="12" />
+
+            <Button Grid.Column="3"
+                    x:Name="DisconnectBtn"
+                    Content="Desconectar"
+                    Click="OnDisconnectClick"
+                    FontSize="12" />
+
+            <!-- Status badge -->
+            <Border Grid.Column="4"
+                    x:Name="StatusBorder"
+                    Background="{ThemeResource SystemFillColorCriticalBrush}"
                     CornerRadius="8"
-                    Padding="8,2"
+                    Padding="10,4"
                     VerticalAlignment="Center">
                 <TextBlock x:Name="StatusBadge"
                            Text="Desconectado"
-                           FontSize="11"
+                           FontSize="12"
+                           FontWeight="Medium"
                            Foreground="White" />
             </Border>
+        </Grid>
+
+        <!-- Toolbar: mode toggle, model selector, clear -->
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    Padding="0,4,0,4">
+            <!-- Permission mode -->
+            <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="2">
+                <StackPanel Orientation="Horizontal" Spacing="0">
+                    <ToggleButton x:Name="ModeConfirmBtn"
+                                  Content="Confirmar"
+                                  IsChecked="True"
+                                  Click="OnModeConfirmClick"
+                                  FontSize="12"
+                                  CornerRadius="4"
+                                  Padding="12,6" />
+                    <ToggleButton x:Name="ModeAutoBtn"
+                                  Content="Automatico"
+                                  IsChecked="False"
+                                  Click="OnModeAutoClick"
+                                  FontSize="12"
+                                  CornerRadius="4"
+                                  Padding="12,6" />
+                </StackPanel>
+            </Border>
+
+            <!-- Clear -->
+            <Button x:Name="ClearBtn"
+                    Content="Limpiar Chat"
+                    Click="OnClearClick"
+                    FontSize="12" />
         </StackPanel>
 
         <!-- Messages area -->
-        <Border Grid.Row="1"
+        <Border Grid.Row="2"
                 BorderBrush="{ThemeResource CardBorderBrush}"
                 BorderThickness="1"
-                CornerRadius="6"
-                Padding="8">
+                CornerRadius="8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                Padding="12">
             <ScrollViewer x:Name="MessagesScroll">
                 <ItemsControl x:Name="MessagesList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Padding="8,4"
-                                    Margin="0,2"
-                                    CornerRadius="4"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="{Binding Role}"
-                                               FontSize="11"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Border Padding="10,6"
+                                    Margin="0,3"
+                                    CornerRadius="6">
+                                <!-- Different background for user vs assistant -->
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                                    </Style>
+                                </Border.Style>
+
+                                <StackPanel Spacing="4">
+                                    <!-- Role badge -->
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Role}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                        <TextBlock Text="{Binding Timestamp}"
+                                                   FontSize="10"
+                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    </StackPanel>
+
+                                    <!-- Message content -->
                                     <TextBlock Text="{Binding Content}"
-                                               TextWrapping="Wrap" />
+                                               TextWrapping="Wrap"
+                                               FontSize="14"
+                                               LineHeight="20"
+                                               IsTextSelectionEnabled="True" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
@@ -61,7 +167,7 @@
         </Border>
 
         <!-- Input area -->
-        <Grid Grid.Row="2" ColumnSpacing="8">
+        <Grid Grid.Row="3" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -70,13 +176,16 @@
             <TextBox x:Name="MessageInput"
                      Grid.Column="0"
                      PlaceholderText="Escribe un mensaje a Liz..."
+                     AcceptsReturn="False"
                      KeyDown="OnMessageInputKeyDown" />
 
             <Button x:Name="SendButton"
                     Grid.Column="1"
                     Content="Enviar"
                     Style="{StaticResource AccentButtonStyle}"
-                    Click="OnSendButtonClick" />
+                    Click="OnSendButtonClick"
+                    FontSize="14"
+                    Padding="24,8" />
         </Grid>
     </Grid>
 </Window>

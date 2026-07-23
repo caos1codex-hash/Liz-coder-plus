@@ -2,11 +2,13 @@
 // File: MainWindow.xaml.cs
 // Project: Liz Coder Plus - Desktop
 // Description: Code-behind for the main application window.
-// Sprint: 1 - Prompt 2 (minimal chat UI)
+// Sprint: 5 — Full integration with ChatViewModel.
 // ============================================================
 
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using LizCoderPlus.Desktop.Services;
@@ -14,12 +16,14 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 
 namespace LizCoderPlus.Desktop.Views;
 
 /// <summary>
-/// Main shell window of the desktop assistant. Wires the minimal chat
-/// UI (textbox + send button + messages list) to the ChatService.
+/// Main shell window of the desktop assistant. Provides the full
+/// chat UI with streaming support, connection management, and
+/// permission mode toggling.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -30,31 +34,65 @@ public sealed partial class MainWindow : Window
     // Pending streamed content for the current assistant bubble.
     private UiMessage? _currentAssistantBubble;
 
+    // Permission mode tracking.
+    private string _currentMode = "confirmation";
+
     public MainWindow()
     {
         this.InitializeComponent();
-        Title = "Liz Coder Plus";
+        Title = "Liz Coder Plus — AI Desktop Assistant";
 
         _dispatcher = DispatcherQueue.GetForCurrentThread()!;
-        _chat = new ChatService();
+        _chat = new ChatService("ws://localhost:8000/ws/chat");
 
         MessagesList.ItemsSource = _messages;
         _chat.MessageReceived += OnMessageReceived;
         _chat.ConnectionStateChanged += OnConnectionStateChanged;
-
-        _ = _chat.ConnectAsync();
-    }
-
-    /// <summary>
-    /// Activates and brings the window to the foreground.
-    /// </summary>
-    public void Activate()
-    {
-        this.Activate();
     }
 
     // ------------------------------------------------------------------
-    // UI event handlers
+    // Connection
+    // ------------------------------------------------------------------
+
+    private async void OnConnectClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _chat.ConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            UpdateStatus("Error", ex.Message);
+        }
+    }
+
+    private async void OnDisconnectClick(object sender, RoutedEventArgs e)
+    {
+        await _chat.DisconnectAsync();
+    }
+
+    // ------------------------------------------------------------------
+    // Permission Mode
+    // ------------------------------------------------------------------
+
+    private void OnModeConfirmClick(object sender, RoutedEventArgs e)
+    {
+        _currentMode = "confirmation";
+        _chat.Mode = "confirmation";
+        ModeConfirmBtn.IsChecked = true;
+        ModeAutoBtn.IsChecked = false;
+    }
+
+    private void OnModeAutoClick(object sender, RoutedEventArgs e)
+    {
+        _currentMode = "automatic";
+        _chat.Mode = "automatic";
+        ModeAutoBtn.IsChecked = true;
+        ModeConfirmBtn.IsChecked = false;
+    }
+
+    // ------------------------------------------------------------------
+    // Chat
     // ------------------------------------------------------------------
 
     private void OnMessageInputKeyDown(object sender, KeyRoutedEventArgs e)
@@ -71,13 +109,18 @@ public sealed partial class MainWindow : Window
         _ = DoSendAsync();
     }
 
+    private void OnClearClick(object sender, RoutedEventArgs e)
+    {
+        _messages.Clear();
+        _currentAssistantBubble = null;
+    }
+
     // ------------------------------------------------------------------
     // Chat service event handlers
     // ------------------------------------------------------------------
 
     private void OnMessageReceived(object? sender, ChatMessageReceivedEventArgs args)
     {
-        // Always marshal to the UI thread before touching _messages.
         _dispatcher.TryEnqueue(() => ApplyEnvelope(args.Envelope));
     }
 
@@ -85,14 +128,26 @@ public sealed partial class MainWindow : Window
     {
         _dispatcher.TryEnqueue(() =>
         {
-            StatusBadge.Text = args.State switch
+            switch (args.State)
             {
-                ChatConnectionState.Connected => "Conectado",
-                ChatConnectionState.Connecting => "Conectando...",
-                ChatConnectionState.Reconnecting => "Reconectando...",
-                ChatConnectionState.Failed => "Error de conexión",
-                _ => "Desconectado"
-            };
+                case ChatConnectionState.Connected:
+                    UpdateStatus("Conectado", null, connected: true);
+                    SessionInfo.Text = $"Sesión: {_chat.SessionId[..8]}...";
+                    break;
+
+                case ChatConnectionState.Connecting:
+                case ChatConnectionState.Reconnecting:
+                    UpdateStatus("Conectando...", null, connecting: true);
+                    break;
+
+                case ChatConnectionState.Failed:
+                    UpdateStatus("Error", args.Reason ?? "Desconocido", failed: true);
+                    break;
+
+                default:
+                    UpdateStatus("Desconectado", null);
+                    break;
+            }
         });
     }
 
@@ -108,30 +163,41 @@ public sealed partial class MainWindow : Window
                 // Accumulate streamed chunks into the current assistant bubble.
                 if (_currentAssistantBubble is null)
                 {
-                    _currentAssistantBubble = new UiMessage { Role = "Liz" };
+                    _currentAssistantBubble = new UiMessage
+                    {
+                        Role = "Liz",
+                        IsAssistant = true,
+                    };
                     _messages.Add(_currentAssistantBubble);
                 }
 
-                _currentAssistantBubble.Content += envelope.Content + " ";
+                _currentAssistantBubble.Content += envelope.Content;
                 break;
 
             case "message":
                 // Finalize the assistant bubble with the full text.
-                if (_currentAssistantBubble is null)
+                if (_currentAssistantBubble is not null)
                 {
-                    _currentAssistantBubble = new UiMessage { Role = "Liz" };
-                    _messages.Add(_currentAssistantBubble);
+                    _currentAssistantBubble.Content = envelope.Content;
+                    _currentAssistantBubble = null;
                 }
-
-                _currentAssistantBubble.Content = envelope.Content;
-                _currentAssistantBubble = null;
+                else if (!string.IsNullOrEmpty(envelope.Content))
+                {
+                    _messages.Add(new UiMessage
+                    {
+                        Role = "Liz",
+                        Content = envelope.Content,
+                        IsAssistant = true,
+                    });
+                }
                 break;
 
             case "error":
                 _messages.Add(new UiMessage
                 {
                     Role = "Error",
-                    Content = envelope.Error ?? "Error desconocido"
+                    Content = envelope.Error ?? envelope.Content ?? "Error desconocido",
+                    IsError = true,
                 });
                 _currentAssistantBubble = null;
                 break;
@@ -139,7 +205,6 @@ public sealed partial class MainWindow : Window
             case "status":
             case "pong":
             case "ping":
-                // Lifecycle messages; no UI action required.
                 break;
         }
 
@@ -158,30 +223,104 @@ public sealed partial class MainWindow : Window
         MessageInput.Text = string.Empty;
 
         // Render the user message immediately.
-        _messages.Add(new UiMessage { Role = "Tú", Content = text });
+        _messages.Add(new UiMessage
+        {
+            Role = "Tú",
+            Content = text,
+            IsUser = true,
+        });
         _currentAssistantBubble = null;
 
         SendButton.IsEnabled = false;
+        SendButton.Content = "Enviando...";
+
         try
         {
+            _chat.Mode = _currentMode;
             await _chat.SendMessageAsync(text);
         }
         catch (Exception ex)
         {
-            _messages.Add(new UiMessage { Role = "Error", Content = ex.Message });
+            _dispatcher.TryEnqueue(() =>
+            {
+                _messages.Add(new UiMessage
+                {
+                    Role = "Error",
+                    Content = ex.Message,
+                    IsError = true,
+                });
+            });
         }
         finally
         {
             SendButton.IsEnabled = true;
+            SendButton.Content = "Enviar";
+        }
+    }
+
+    private void UpdateStatus(
+        string text,
+        string? reason,
+        bool connected = false,
+        bool connecting = false,
+        bool failed = false)
+    {
+        StatusBadge.Text = text;
+        SessionInfo.Text = reason ?? "";
+
+        // Update badge color via code-behind (WinUI 3).
+        if (connected)
+        {
+            StatusBorder.Background = new SolidColorBrush(
+                Microsoft.UI.Colors.Green);
+        }
+        else if (connecting)
+        {
+            StatusBorder.Background = new SolidColorBrush(
+                Microsoft.UI.Colors.Orange);
+        }
+        else if (failed)
+        {
+            StatusBorder.Background = new SolidColorBrush(
+                Microsoft.UI.Colors.Red);
+        }
+        else
+        {
+            StatusBorder.Background = new SolidColorBrush(
+                Microsoft.UI.Colors.Gray);
         }
     }
 
     /// <summary>
     /// Simple display model for the messages list.
+    /// Implements INotifyPropertyChanged for data binding updates.
     /// </summary>
-    public sealed class UiMessage
+    public sealed class UiMessage : INotifyPropertyChanged
     {
-        public string Role { get; set; } = string.Empty;
-        public string Content { get; set; } = string.Empty;
+        private string _role = string.Empty;
+        private string _content = string.Empty;
+
+        public string Role
+        {
+            get => _role;
+            set { _role = value; OnPropertyChanged(); }
+        }
+
+        public string Content
+        {
+            get => _content;
+            set { _content = value; OnPropertyChanged(); }
+        }
+
+        public bool IsUser { get; init; }
+        public bool IsAssistant { get; init; }
+        public bool IsError { get; init; }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void OnPropertyChanged([CallerMemberName] string? name = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
     }
 }
