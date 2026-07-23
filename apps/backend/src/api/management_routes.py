@@ -973,4 +973,117 @@ async def dispatch_to_agent(
     }
 
 
+# ---------------------------------------------------------------------
+# Knowledge Memory (Sprint 8)
+# ---------------------------------------------------------------------
+
+
+class KnowledgeStoreRequest(BaseModel):
+    """Request to store a knowledge entry."""
+
+    content: str = Field(..., min_length=1, description="Knowledge content")
+    category: str = Field(default="fact", description="Category tag")
+    tags: list[str] = Field(default_factory=list, description="Indexing tags")
+    key: str | None = Field(default=None, description="Optional unique key")
+    importance: int = Field(default=5, ge=1, le=10, description="Importance 1-10")
+
+
+@router.get("/memory/knowledge", tags=["memory"])
+async def list_knowledge(
+    category: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """List knowledge entries, optionally filtered by category."""
+    orch = get_orchestrator()
+    memory = orch._memory
+
+    if memory is None or not hasattr(memory, "knowledge"):
+        return {"entries": [], "total": 0, "categories": {}}
+
+    km = memory.knowledge
+    entries = km.get_all_entries()
+
+    if category:
+        entries = [e for e in entries if e.category == category]
+
+    total = len(entries)
+    shown = entries[:limit]
+
+    return {
+        "entries": [e.to_dict() for e in shown],
+        "total": total,
+        "categories": km.list_categories(),
+        "tags": km.list_tags(),
+    }
+
+
+@router.post("/memory/knowledge", tags=["memory"])
+async def store_knowledge(req: KnowledgeStoreRequest) -> dict[str, Any]:
+    """Store a knowledge entry in long-term memory."""
+    orch = get_orchestrator()
+    memory = orch._memory
+
+    if memory is None or not hasattr(memory, "knowledge"):
+        raise HTTPException(status_code=503, detail="Memory system not available")
+
+    km = memory.knowledge
+    key = km.store(
+        key=req.key,
+        content=req.content,
+        category=req.category,
+        tags=req.tags,
+        importance=req.importance,
+        overwrite=True,
+    )
+
+    return {"status": "ok", "key": key}
+
+
+@router.get("/memory/knowledge/search", tags=["memory"])
+async def search_knowledge(
+    query: str,
+    category: str | None = None,
+    tags: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Search knowledge memory by query text, category, and/or tags."""
+    orch = get_orchestrator()
+    memory = orch._memory
+
+    if memory is None or not hasattr(memory, "knowledge"):
+        return {"results": [], "total": 0}
+
+    km = memory.knowledge
+    tag_list = tags.split(",") if tags else None
+    results = km.search(
+        query,
+        category=category,
+        tags=tag_list,
+        limit=limit,
+    )
+
+    return {
+        "results": [e.to_dict() for e in results],
+        "total": len(results),
+    }
+
+
+@router.delete("/memory/knowledge/{key}", tags=["memory"])
+async def delete_knowledge(key: str) -> dict[str, str]:
+    """Delete a knowledge entry by key."""
+    orch = get_orchestrator()
+    memory = orch._memory
+
+    if memory is None or not hasattr(memory, "knowledge"):
+        raise HTTPException(status_code=503, detail="Memory system not available")
+
+    km = memory.knowledge
+    deleted = km.delete(key)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Knowledge entry '{key}' not found")
+
+    return {"status": "ok", "message": f"Deleted knowledge entry '{key}'"}
+
+
 __all__ = ["router"]
