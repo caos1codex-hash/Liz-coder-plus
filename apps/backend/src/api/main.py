@@ -425,8 +425,12 @@ async def _initialize_advanced_systems(orchestrator: object) -> None:
         return
 
     try:
-        # 1. Planner.
+        # 1. Planner with LLM support.
         planner = Planner(event_bus=orchestrator.event_bus)
+        # Attach ModelManager for LLM-backed planning if available.
+        llm_agent_ref = orchestrator._agents.get("llm")
+        if llm_agent_ref and hasattr(llm_agent_ref, 'model_manager'):
+            planner.attach_model_manager(llm_agent_ref.model_manager)
         orchestrator.attach_planner(planner)
         logger.info("Planner attached to Orchestrator")
 
