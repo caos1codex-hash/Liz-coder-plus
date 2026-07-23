@@ -23,6 +23,7 @@ from src import __version__
 from src.api.ws_routes import get_orchestrator, get_ws_manager, router as ws_router
 from src.api.management_routes import router as mgmt_router
 from src.core.config import load_config
+from src.multiagent_init import initialize_multiagent_system
 
 logger = logging.getLogger(__name__)
 
@@ -558,6 +559,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize Planner, ContextEngine, and PlanExecutor.
     await _initialize_advanced_systems(orch)
+
+    # Initialize multiagent system (7 specialized agents).
+    await initialize_multiagent_system(orch)
 
     # Initialize persistent memory if configured.
     await _initialize_memory(orch)
