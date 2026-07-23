@@ -115,6 +115,7 @@ var/
 wheels/
 share/python-wheels/
 *.manifest
+!apps/desktop/app.manifest
 *.spec
 pip-log.txt
 pip-delete-this-directory.txt
@@ -193,6 +194,7 @@ node_modules/
 
 # ---------- PyInstaller ----------
 *.manifest
+!apps/desktop/app.manifest
 *.spec
 
 # ---------- Type checkers ----------
