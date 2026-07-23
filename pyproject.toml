@@ -1,0 +1,82 @@
+[project]
+name = "liz-coder-plus"
+version = "0.12.0"
+description = "Liz Coder Plus — Personal AI Operating System desktop assistant with multi-agent orchestration, indexed memory, planning, and multi-LLM support"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["ai", "assistant", "desktop", "multi-agent", "llm", "planner", "orchestrator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Backend
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    # Database
+    "aiosqlite>=0.20.0",
+    # HTTP client (LLM providers)
+    "httpx>=0.25.0",
+    # Utilities
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+desktop = []  # Placeholder — .NET 8 desktop app is separate
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# This is the workspace root — no packages to install from here.
+# Sub-packages use editable installs via scripts/setup_dev.py.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = [
+    "packages/core/src",
+    "packages/memory/src",
+    "packages/llm/src",
+    "packages/tools/src",
+    "packages/agents/src",
+    "packages/multiagent/src",
+    "packages/shared/src",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# ============================================================
+# Workspace packages — installed via: pip install -e packages/*
+# ============================================================
+
+[tool.setuptools.packages.find]
+# Root workspace has no installable packages.
+where = []
