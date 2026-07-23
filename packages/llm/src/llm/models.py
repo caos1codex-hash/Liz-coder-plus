@@ -28,6 +28,8 @@ class ModelProvider(str, Enum):
     NVIDIA = "nvidia"
     DEEPSEEK = "deepseek"
     MISTRAL = "mistral"
+    GLM = "glm"
+    QWEN = "qwen"
 
 
 class ModelStatus(str, Enum):
