@@ -9,118 +9,178 @@
     mc:Ignorable="d"
     Title="Liz Coder Plus — AI Desktop Assistant">
 
-    <Grid Padding="16" RowSpacing="8">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Grid Padding="0">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280" MinWidth="200" MaxWidth="400" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <!-- Header with branding and status -->
-        <Grid Grid.Row="0" ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+        <!-- ============================================================ -->
+        <!-- SIDEBAR: Conversations + Settings                          -->
+        <!-- ============================================================ -->
+        <Grid Grid.Column="0" Padding="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-            <!-- Logo / Title -->
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+            <!-- Logo + Title -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Padding="0,4,0,8">
                 <Border Background="{ThemeResource AccentFillColorDefaultBrush}"
                         CornerRadius="12"
-                        Width="32" Height="32">
+                        Width="36" Height="36">
                     <TextBlock Text="L"
-                               FontSize="18"
+                               FontSize="20"
                                FontWeight="Bold"
                                Foreground="White"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center" />
                 </Border>
-                <TextBlock Text="Liz Coder Plus"
-                           FontSize="20"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center" />
+                <StackPanel Spacing="2">
+                    <TextBlock Text="Liz Coder Plus"
+                               FontSize="16"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="v0.14.0"
+                               FontSize="11"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
             </StackPanel>
 
-            <!-- Session info -->
-            <TextBlock Grid.Column="1"
-                       x:Name="SessionInfo"
-                       Text=""
-                       FontSize="12"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       VerticalAlignment="Center"
-                       HorizontalAlignment="Center" />
-
-            <!-- Connection controls -->
-            <Button Grid.Column="2"
-                    x:Name="ConnectBtn"
-                    Content="Conectar"
-                    Click="OnConnectClick"
+            <!-- New chat button -->
+            <Button Grid.Row="1"
+                    Content="Nueva Conversacion"
+                    Click="OnNewChatClick"
                     Style="{StaticResource AccentButtonStyle}"
-                    FontSize="12" />
+                    HorizontalAlignment="Stretch"
+                    Margin="0,4,0,8" />
 
-            <Button Grid.Column="3"
-                    x:Name="DisconnectBtn"
-                    Content="Desconectar"
-                    Click="OnDisconnectClick"
-                    FontSize="12" />
-
-            <!-- Status badge -->
-            <Border Grid.Column="4"
-                    x:Name="StatusBorder"
-                    Background="{ThemeResource SystemFillColorCriticalBrush}"
+            <!-- Conversations list -->
+            <Border Grid.Row="2"
+                    BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1"
                     CornerRadius="8"
-                    Padding="10,4"
-                    VerticalAlignment="Center">
-                <TextBlock x:Name="StatusBadge"
+                    Padding="4">
+                <ListView x:Name="ConversationsList"
+                          SelectionMode="Single"
+                          SelectionChanged="OnConversationSelectionChanged"
+                          DoubleTapped="OnConversationDoubleTapped">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Padding="8,6" Spacing="4">
+                                <TextBlock Text="{Binding Title}"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Preview}"
+                                           FontSize="11"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Timestamp}"
+                                           FontSize="10"
+                                           Foreground="{ThemeResource TextFillColorQuaternaryBrush}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+
+            <!-- Connection status -->
+            <Border Grid.Row="3"
+                    x:Name="SidebarStatusBorder"
+                    Background="{ThemeResource SystemFillColorCriticalBrush}"
+                    CornerRadius="6"
+                    Padding="8,4"
+                    Margin="0,8,0,4">
+                <TextBlock x:Name="SidebarStatusText"
                            Text="Desconectado"
-                           FontSize="12"
+                           FontSize="11"
                            FontWeight="Medium"
                            Foreground="White" />
             </Border>
+
+            <!-- Settings button -->
+            <Button Grid.Row="4"
+                    Content="Configuracion"
+                    Click="OnSettingsClick"
+                    HorizontalAlignment="Stretch"
+                    Margin="0,2,0,0" />
         </Grid>
 
-        <!-- Toolbar: mode toggle, model selector, clear -->
-        <StackPanel Grid.Row="1"
-                    Orientation="Horizontal"
-                    Spacing="12"
-                    Padding="0,4,0,4">
-            <!-- Permission mode -->
-            <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="6"
-                    Padding="2">
-                <StackPanel Orientation="Horizontal" Spacing="0">
-                    <ToggleButton x:Name="ModeConfirmBtn"
-                                  Content="Confirmar"
-                                  IsChecked="True"
-                                  Click="OnModeConfirmClick"
-                                  FontSize="12"
-                                  CornerRadius="4"
-                                  Padding="12,6" />
-                    <ToggleButton x:Name="ModeAutoBtn"
-                                  Content="Automatico"
-                                  IsChecked="False"
-                                  Click="OnModeAutoClick"
-                                  FontSize="12"
-                                  CornerRadius="4"
-                                  Padding="12,6" />
-                </StackPanel>
-            </Border>
+        <!-- Grid splitter -->
+        <Border Grid.Column="1"
+                Width="1"
+                Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-            <!-- Model selector -->
-            <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="6"
-                    Padding="2">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <FontIcon Glyph="&#xE945;"
-                              FontSize="14"
-                              VerticalAlignment="Center"
-                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <!-- ============================================================ -->
+        <!-- MAIN AREA: Toolbar + Chat + Input                          -->
+        <!-- ============================================================ -->
+        <Grid Grid.Column="2" Padding="16" RowSpacing="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Toolbar: connection, mode, model, agents, clear -->
+            <Grid Grid.Row="0" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Connection controls -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="ConnectBtn"
+                            Content="Conectar"
+                            Click="OnConnectClick"
+                            Style="{StaticResource AccentButtonStyle}"
+                            FontSize="12" />
+                    <Button x:Name="DisconnectBtn"
+                            Content="Desconectar"
+                            Click="OnDisconnectClick"
+                            FontSize="12" />
+                </StackPanel>
+
+                <!-- Permission mode -->
+                <Border Grid.Column="1"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="2">
+                    <StackPanel Orientation="Horizontal" Spacing="0">
+                        <ToggleButton x:Name="ModeConfirmBtn"
+                                      Content="Confirmar"
+                                      IsChecked="True"
+                                      Click="OnModeConfirmClick"
+                                      FontSize="12"
+                                      CornerRadius="4"
+                                      Padding="10,4" />
+                        <ToggleButton x:Name="ModeAutoBtn"
+                                      Content="Automatico"
+                                      IsChecked="False"
+                                      Click="OnModeAutoClick"
+                                      FontSize="12"
+                                      CornerRadius="4"
+                                      Padding="10,4" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Model selector -->
+                <Border Grid.Column="2"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="2">
                     <ComboBox x:Name="ModelSelector"
                               SelectedIndex="0"
                               FontSize="12"
@@ -128,104 +188,201 @@
                               SelectionChanged="OnModelSelectionChanged">
                         <ComboBoxItem Content="Auto (por defecto)" Tag="auto" />
                     </ComboBox>
-                </StackPanel>
-            </Border>
+                </Border>
 
-            <!-- Agent status indicator -->
-            <Border x:Name="AgentStatusBorder"
-                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                <!-- Agent status -->
+                <Border Grid.Column="3"
+                        x:Name="AgentStatusBorder"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="8,4">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon x:Name="AgentStatusIcon"
+                                  Glyph="&#xE783;"
+                                  FontSize="14"
+                                  VerticalAlignment="Center"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                        <TextBlock x:Name="AgentStatusText"
+                                   Text="10 agentes"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Session info -->
+                <TextBlock Grid.Column="4"
+                           x:Name="SessionInfo"
+                           Text=""
+                           FontSize="11"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           VerticalAlignment="Center" />
+
+                <!-- Clear -->
+                <Button Grid.Column="6"
+                        x:Name="ClearBtn"
+                        Content="Limpiar"
+                        Click="OnClearClick"
+                        FontSize="12" />
+            </Grid>
+
+            <!-- Messages area -->
+            <Border Grid.Row="2"
+                    BorderBrush="{ThemeResource CardBorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="6"
-                    Padding="8,4">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon x:Name="AgentStatusIcon"
-                              Glyph="&#xE783;"
-                              FontSize="14"
-                              VerticalAlignment="Center"
-                              Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                    <TextBlock x:Name="AgentStatusText"
-                               Text="7 agentes"
-                               FontSize="12"
-                               VerticalAlignment="Center"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
+                    CornerRadius="8"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    Padding="12"
+                    Margin="0,4,0,4">
+                <ScrollViewer x:Name="MessagesScroll">
+                    <ItemsControl x:Name="MessagesList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,6"
+                                        Margin="0,3"
+                                        CornerRadius="6">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                                        </Style>
+                                    </Border.Style>
+
+                                    <StackPanel Spacing="4">
+                                        <!-- Role badge -->
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Role}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                            <TextBlock Text="{Binding Timestamp}"
+                                                       FontSize="10"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        </StackPanel>
+
+                                        <!-- Message content -->
+                                        <TextBlock Text="{Binding Content}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="14"
+                                                   LineHeight="20"
+                                                   IsTextSelectionEnabled="True" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
             </Border>
 
-            <!-- Clear -->
-            <Button x:Name="ClearBtn"
-                    Content="Limpiar Chat"
-                    Click="OnClearClick"
-                    FontSize="12" />
-        </StackPanel>
+            <!-- Input area -->
+            <Grid Grid.Row="3" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-        <!-- Messages area -->
-        <Border Grid.Row="2"
-                BorderBrush="{ThemeResource CardBorderBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                Padding="12">
-            <ScrollViewer x:Name="MessagesScroll">
-                <ItemsControl x:Name="MessagesList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Padding="10,6"
-                                    Margin="0,3"
-                                    CornerRadius="6">
-                                <!-- Different background for user vs assistant -->
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
-                                    </Style>
-                                </Border.Style>
+                <TextBox x:Name="MessageInput"
+                         Grid.Column="0"
+                         PlaceholderText="Escribe un mensaje a Liz..."
+                         AcceptsReturn="False"
+                         KeyDown="OnMessageInputKeyDown" />
 
-                                <StackPanel Spacing="4">
-                                    <!-- Role badge -->
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="{Binding Role}"
-                                                   FontSize="11"
-                                                   FontWeight="SemiBold"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Button x:Name="SendButton"
+                        Grid.Column="1"
+                        Content="Enviar"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Click="OnSendButtonClick"
+                        FontSize="14"
+                        Padding="24,8" />
+            </Grid>
+        </Grid>
 
-                                        <TextBlock Text="{Binding Timestamp}"
-                                                   FontSize="10"
-                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                    </StackPanel>
+        <!-- ============================================================ -->
+        <!-- SETTINGS FLYOUT (hidden by default)                         -->
+        <!-- ============================================================ -->
+        <Grid x:Name="SettingsOverlay"
+              Grid.ColumnSpan="3"
+              Visibility="Collapsed"
+              Background="{ThemeResource WindowFillColorDefaultBrush}">
+            <Border HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="24"
+                    Width="500">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Configuracion"
+                               FontSize="24"
+                               FontWeight="Bold" />
 
-                                    <!-- Message content -->
-                                    <TextBlock Text="{Binding Content}"
-                                               TextWrapping="Wrap"
-                                               FontSize="14"
-                                               LineHeight="20"
-                                               IsTextSelectionEnabled="True" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-        </Border>
+                    <!-- Backend URL -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="URL del Backend" FontSize="13" />
+                        <TextBox x:Name="SettingsBackendUrl"
+                                 Text="http://localhost:8000"
+                                 FontSize="13" />
+                    </StackPanel>
 
-        <!-- Input area -->
-        <Grid Grid.Row="3" ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+                    <!-- NVIDIA API Key -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="NVIDIA API Key" FontSize="13" />
+                        <PasswordBox x:Name="SettingsNvidiaKey"
+                                     PlaceholderText="nvapi-..."
+                                     FontSize="13" />
+                    </StackPanel>
 
-            <TextBox x:Name="MessageInput"
-                     Grid.Column="0"
-                     PlaceholderText="Escribe un mensaje a Liz..."
-                     AcceptsReturn="False"
-                     KeyDown="OnMessageInputKeyDown" />
+                    <!-- GLM API Key -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="GLM (ZhipuAI) API Key" FontSize="13" />
+                        <PasswordBox x:Name="SettingsGlmKey"
+                                     PlaceholderText="Tu clave GLM..."
+                                     FontSize="13" />
+                    </StackPanel>
 
-            <Button x:Name="SendButton"
-                    Grid.Column="1"
-                    Content="Enviar"
-                    Style="{StaticResource AccentButtonStyle}"
-                    Click="OnSendButtonClick"
-                    FontSize="14"
-                    Padding="24,8" />
+                    <!-- Qwen API Key -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Qwen (Alibaba) API Key" FontSize="13" />
+                        <PasswordBox x:Name="SettingsQwenKey"
+                                     PlaceholderText="Tu clave Qwen..."
+                                     FontSize="13" />
+                    </StackPanel>
+
+                    <!-- Permission Mode -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Modo de Permisos" FontSize="13" />
+                        <ComboBox x:Name="SettingsPermissionMode"
+                                  SelectedIndex="0"
+                                  FontSize="13">
+                            <ComboBoxItem Content="Confirmacion" Tag="confirmation" />
+                            <ComboBoxItem Content="Automatico" Tag="automatic" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Max History -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Historial Maximo (mensajes)" FontSize="13" />
+                        <NumberBox x:Name="SettingsMaxHistory"
+                                   Value="200"
+                                   Minimum="10"
+                                   Maximum="1000"
+                                   FontSize="13" />
+                    </StackPanel>
+
+                    <!-- Buttons -->
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button Content="Guardar"
+                                Click="OnSaveSettingsClick"
+                                Style="{StaticResource AccentButtonStyle}"
+                                Width="120" />
+                        <Button Content="Cancelar"
+                                Click="OnCancelSettingsClick"
+                                Width="120" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </Grid>
     </Grid>
 </Window>
