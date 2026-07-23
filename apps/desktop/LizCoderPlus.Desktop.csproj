@@ -26,7 +26,6 @@
     <Copyright>2024 Liz Coder Plus - MIT License</Copyright>
     <AssemblyTitle>LizCoderPlus.Desktop</AssemblyTitle>
     <AssemblyProduct>Liz Coder Plus</AssemblyProduct>
-    <StartupObject>LizCoderPlus.Desktop.App</StartupObject>
 
     <!-- Single-file publish settings -->
     <PublishSingleFile>true</PublishSingleFile>

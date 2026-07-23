@@ -8,6 +8,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -358,28 +359,28 @@ public sealed partial class MainWindow : Window
         bool connecting = false,
         bool failed = false)
     {
-        StatusBadge.Text = text;
+        SidebarStatusText.Text = text;
         SessionInfo.Text = reason ?? "";
 
         // Update badge color via code-behind (WinUI 3).
         if (connected)
         {
-            StatusBorder.Background = new SolidColorBrush(
+            SidebarStatusBorder.Background = new SolidColorBrush(
                 Microsoft.UI.Colors.Green);
         }
         else if (connecting)
         {
-            StatusBorder.Background = new SolidColorBrush(
+            SidebarStatusBorder.Background = new SolidColorBrush(
                 Microsoft.UI.Colors.Orange);
         }
         else if (failed)
         {
-            StatusBorder.Background = new SolidColorBrush(
+            SidebarStatusBorder.Background = new SolidColorBrush(
                 Microsoft.UI.Colors.Red);
         }
         else
         {
-            StatusBorder.Background = new SolidColorBrush(
+            SidebarStatusBorder.Background = new SolidColorBrush(
                 Microsoft.UI.Colors.Gray);
         }
     }

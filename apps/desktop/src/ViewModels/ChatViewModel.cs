@@ -217,11 +217,8 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     {
         if (Messages.Count > 0 && Messages[^1].Role == "assistant")
         {
-            // Append to existing streaming message.
-            var lastMsg = Messages[^1];
-            lastMsg.Content += content;
-            // Force UI update by replacing the item.
-            Messages[^1] = lastMsg with { Content = lastMsg.Content };
+            // Append to existing streaming message (mutable class).
+            Messages[^1].Content += content;
         }
         else
         {
@@ -238,8 +235,7 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
     {
         if (Messages.Count > 0 && Messages[^1].Role == "assistant")
         {
-            var lastMsg = Messages[^1];
-            Messages[^1] = lastMsg with { Content = content };
+            Messages[^1].Content = content;
         }
         else
         {
@@ -269,9 +265,9 @@ public sealed partial class ChatViewModel : ObservableObject, IDisposable
 /// <summary>
 /// Represents a single message in the chat conversation.
 /// </summary>
-public sealed record ChatMessage
+public sealed class ChatMessage
 {
-    public required string Role { get; init; }
-    public required string Content { get; init; }
+    public required string Role { get; set; }
+    public required string Content { get; set; }
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 }
