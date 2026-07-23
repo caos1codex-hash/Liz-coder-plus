@@ -33,6 +33,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherQueue _dispatcher;
     private readonly HttpClient _httpClient = new();
     private readonly ObservableCollection<UiMessage> _messages = new();
+    private readonly ObservableCollection<ConversationItem> _conversations = new();
 
     // Pending streamed content for the current assistant bubble.
     private UiMessage? _currentAssistantBubble;
@@ -42,6 +43,9 @@ public sealed partial class MainWindow : Window
 
     // Selected model for chat.
     private string _selectedModel = "auto";
+
+    // Settings visibility.
+    private bool _settingsVisible;
 
     // Backend base URL.
     private const string BackendUrl = "http://localhost:8000";
@@ -55,8 +59,17 @@ public sealed partial class MainWindow : Window
         _chat = new ChatService("ws://localhost:8000/ws/chat");
 
         MessagesList.ItemsSource = _messages;
+        ConversationsList.ItemsSource = _conversations;
         _chat.MessageReceived += OnMessageReceived;
         _chat.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // Load some sample conversations for demo.
+        _conversations.Add(new ConversationItem
+        {
+            Title = "Bienvenida",
+            Preview = "Hola Liz, como estas?",
+            Timestamp = DateTime.Now.ToString("HH:mm"),
+        });
     }
 
     // ------------------------------------------------------------------
@@ -126,6 +139,59 @@ public sealed partial class MainWindow : Window
     {
         _messages.Clear();
         _currentAssistantBubble = null;
+    }
+
+    // ------------------------------------------------------------------
+    // Sidebar
+    // ------------------------------------------------------------------
+
+    private void OnNewChatClick(object sender, RoutedEventArgs e)
+    {
+        _messages.Clear();
+        _currentAssistantBubble = null;
+
+        // Create a new conversation entry.
+        var title = $"Conversacion {_conversations.Count + 1}";
+        _conversations.Insert(0, new ConversationItem
+        {
+            Title = title,
+            Preview = "Nueva conversacion...",
+            Timestamp = DateTime.Now.ToString("HH:mm"),
+        });
+        ConversationsList.SelectedIndex = 0;
+    }
+
+    private void OnConversationSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Placeholder: switch conversation context when conversations are implemented.
+    }
+
+    private void OnConversationDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        // Placeholder: open conversation details.
+    }
+
+    // ------------------------------------------------------------------
+    // Settings
+    // ------------------------------------------------------------------
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        _settingsVisible = true;
+        SettingsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void OnSaveSettingsClick(object sender, RoutedEventArgs e)
+    {
+        // Apply settings (placeholder — in production would save to file/env).
+        _settingsVisible = false;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnCancelSettingsClick(object sender, RoutedEventArgs e)
+    {
+        _settingsVisible = false;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
     }
 
     // ------------------------------------------------------------------
@@ -435,5 +501,15 @@ public sealed partial class MainWindow : Window
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
+    }
+
+    /// <summary>
+    /// Display model for conversation items in the sidebar.
+    /// </summary>
+    public sealed class ConversationItem
+    {
+        public string Title { get; init; } = string.Empty;
+        public string Preview { get; init; } = string.Empty;
+        public string Timestamp { get; init; } = string.Empty;
     }
 }
