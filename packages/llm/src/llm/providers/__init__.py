@@ -9,6 +9,8 @@ from src.llm.providers.anthropic import AnthropicProvider
 from src.llm.providers.google import GoogleProvider
 from src.llm.providers.ollama import OllamaProvider
 from src.llm.providers.openrouter import OpenRouterProvider
+from src.llm.providers.glm import GlmProvider
+from src.llm.providers.qwen import QwenProvider
 
 __all__ = [
     "BaseLLMProvider",
@@ -20,4 +22,6 @@ __all__ = [
     "GoogleProvider",
     "OllamaProvider",
     "OpenRouterProvider",
+    "GlmProvider",
+    "QwenProvider",
 ]
