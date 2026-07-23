@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented here.
 
+## [0.14.0] — 2026-07-23 — Sprint 8: GLM + Qwen Providers, README Overhaul
+
+### Sprint 8 — Nuevos Proveedores LLM y Documentación Actualizada
+
+#### Resumen
+Sprint enfocado en expandir la cobertura de proveedores LLM con dos nuevos
+providers (GLM/ZhipuAI y Qwen/Alibaba Cloud), actualización completa del
+README para reflejar el estado real del proyecto, y configuración expandida.
+
+#### Nuevos Proveedores LLM
+- **GLM Provider** (`packages/llm/src/llm/providers/glm.py`) — Nuevo:
+  Provider para ZhipuAI GLM-4 series con API OpenAI-compatible.
+  - 8 modelos predefinidos: glm-4-plus, glm-4-long, glm-4-flash, glm-4-air, glm-4-airx, glm-4, glm-4v, glm-4v-plus.
+  - Streaming SSE, function calling, health check.
+  - Capabilities predefinidas para cada modelo (context_window hasta 1M tokens).
+  - API endpoint: `https://open.bigmodel.cn/api/paas/v4`.
+
+- **Qwen Provider** (`packages/llm/src/llm/providers/qwen.py`) — Nuevo:
+  Provider standalone para Qwen by Alibaba Cloud con API OpenAI-compatible.
+  - 8 modelos predefinidos: qwen-max, qwen-plus, qwen-turbo, qwen-long, qwen2.5-72b-instruct, qwen2.5-coder-32b-instruct, qwen-vl-max, qwen-vl-plus.
+  - Streaming SSE, function calling, vision support.
+  - API endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1`.
+
+- **ModelProvider enum** extendido con `GLM` y `QWEN`.
+
+- **ModelManager._PROVIDER_CLASS_MAP** actualizado con 10 proveedores.
+
+- **providers/__init__.py** exporta GLM y Qwen providers.
+
+#### Backend — Inicialización
+- `apps/backend/src/api/main.py` — `_initialize_llm()` mejorado:
+  - Registro automático de 5 modelos GLM si `GLM_API_KEY` está configurada.
+  - Registro automático de 6 modelos Qwen si `QWEN_API_KEY` está configurada.
+
+#### Configuración
+- `config/development.json` — Nuevas secciones `glm` y `qwen` con base URLs y priority models.
+- `config/production.json` — Nuevas secciones `glm` y `qwen` con priority models.
+- `.env.example` — Agregadas variables `GLM_API_KEY` y `QWEN_API_KEY`.
+
+#### Documentación
+- **README.md** — Reescritura completa:
+  - Tabla de proveedores LLM con 10 providers y capabilities.
+  - Roadmap actualizado con Sprints 1-7 completados (estaban marcados como pendientes).
+  - Lista de endpoints REST/WebSocket completa.
+  - Sección de Docker, variables de entorno, y próximos pasos.
+  - Estado actualizado: "Sprint 7 completado — Production Ready".
+
+#### Total de Providers LLM
+El sistema ahora soporta 10 proveedores: Ollama, OpenAI, Anthropic, Google, OpenRouter, NVIDIA, DeepSeek, Mistral, GLM, Qwen.
+
+---
+
 ## [0.13.0] — 2026-07-23 — Sprint 7: Infrastructure, Build Fixes, Production Readiness
 
 ### Sprint 7 — Infraestructura, Correcciones Críticas y Preparación para Producción
