@@ -752,4 +752,225 @@ async def execute_plan(req: ExecutePlanRequest):
     )
 
 
+# ---------------------------------------------------------------------
+# Permissions Management (Sprint 8)
+# ---------------------------------------------------------------------
+
+
+class PermissionModeRequest(BaseModel):
+    """Request to change the permission mode."""
+
+    mode: str = Field(..., pattern="^(confirmation|automatic)$",
+                      description="New permission mode")
+
+
+@router.get("/permissions", tags=["permissions"])
+async def get_permissions() -> dict[str, Any]:
+    """Get current permission configuration.
+
+    Returns the active mode, allowed/denied command lists, and
+    recent audit log entries.
+    """
+    orch = get_orchestrator()
+    perm_service = getattr(orch, "_permission_service", None)
+
+    if perm_service is None:
+        # Fall back to config-based info.
+        from src.core.config import load_config
+        config = load_config()
+        return {
+            "mode": config.permissions.mode,
+            "allowed_commands": config.permissions.allowed_commands,
+            "denied_commands": config.permissions.denied_commands,
+            "audit_count": 0,
+            "audit_recent": [],
+        }
+
+    return {
+        "mode": getattr(perm_service, "_mode", "confirmation"),
+        "allowed_commands": list(getattr(perm_service, "_allow_list", [])),
+        "denied_commands": list(getattr(perm_service, "_deny_list", [])),
+        "audit_count": len(getattr(perm_service, "_audit_log", [])),
+        "audit_recent": [
+            entry.to_dict() if hasattr(entry, "to_dict") else str(entry)
+            for entry in getattr(perm_service, "_audit_log", [])[-20:]
+        ],
+    }
+
+
+@router.put("/permissions/mode", tags=["permissions"])
+async def set_permission_mode(req: PermissionModeRequest) -> dict[str, str]:
+    """Change the permission mode (confirmation/automatic).
+
+    In confirmation mode, dangerous operations require user approval.
+    In automatic mode, all operations proceed without approval.
+    """
+    orch = get_orchestrator()
+    perm_service = getattr(orch, "_permission_service", None)
+
+    if perm_service is not None:
+        try:
+            perm_service.set_mode(req.mode)
+        except AttributeError:
+            perm_service._mode = req.mode
+    else:
+        # Update config file.
+        from src.core.config import load_config
+        import json
+        from pathlib import Path
+        config = load_config()
+        config.permissions.mode = req.mode  # type: ignore[assignment]
+        config_path = Path(__file__).resolve().parents[3] / "config"
+        env_file = config_path / f"{config.environment}.json"
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["permissions"]["mode"] = req.mode
+            with open(env_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+    return {"status": "ok", "message": f"Permission mode set to {req.mode}"}
+
+
+# ---------------------------------------------------------------------
+# Audit Log (Sprint 8)
+# ---------------------------------------------------------------------
+
+
+@router.get("/audit", tags=["audit"])
+async def get_audit_log(
+    limit: int = 50,
+    offset: int = 0,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    """Retrieve the audit log.
+
+    Optionally filter by agent name and paginate with limit/offset.
+    """
+    orch = get_orchestrator()
+    perm_service = getattr(orch, "_permission_service", None)
+
+    if perm_service is None:
+        return {"entries": [], "total": 0, "limit": limit, "offset": offset}
+
+    audit_log = getattr(perm_service, "_audit_log", [])
+
+    # Filter by agent if requested.
+    if agent:
+        filtered = [
+            e for e in audit_log
+            if hasattr(e, "agent") and e.agent == agent
+        ]
+    else:
+        filtered = list(audit_log)
+
+    total = len(filtered)
+    entries = filtered[offset:offset + limit]
+
+    return {
+        "entries": [
+            entry.to_dict() if hasattr(entry, "to_dict") else str(entry)
+            for entry in entries
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# ---------------------------------------------------------------------
+# Multiagent Status (Sprint 8)
+# ---------------------------------------------------------------------
+
+
+@router.get("/multiagent/status", tags=["multiagent"])
+async def get_multiagent_status() -> dict[str, Any]:
+    """Get the status of the multiagent subsystem.
+
+    Returns information about each specialized agent, the
+    multiagent orchestrator, and the message bus.
+    """
+    orch = get_orchestrator()
+    ma_orch = getattr(orch, "_multiagent_orchestrator", None)
+
+    if ma_orch is None:
+        return {
+            "status": "not_initialized",
+            "agents": [],
+            "message_bus": {"pending": 0},
+            "task_queue": {"size": 0},
+        }
+
+    # Collect agent health information.
+    agents_info = []
+    for name, agent in ma_orch._agents.items():
+        health = None
+        try:
+            health = await agent.health()
+            agents_info.append({
+                "name": name,
+                "status": agent.status.value if hasattr(agent, "status") else "unknown",
+                "health": {
+                    "state": health.state.value if hasattr(health, "state") else "unknown",
+                    "uptime_s": getattr(health, "uptime_s", 0),
+                    "tasks_total": getattr(health, "tasks_total", 0),
+                    "tasks_ok": getattr(health, "tasks_ok", 0),
+                    "tasks_failed": getattr(health, "tasks_failed", 0),
+                } if health else None,
+                "objectives": list(getattr(agent, "objectives", [])),
+                "permissions": [
+                    p.value if hasattr(p, "value") else str(p)
+                    for p in getattr(agent, "permissions", [])
+                ],
+            })
+        except Exception as exc:
+            agents_info.append({
+                "name": name,
+                "status": "error",
+                "error": str(exc),
+            })
+
+    return {
+        "status": "active",
+        "agents_count": len(agents_info),
+        "agents": agents_info,
+        "message_bus": {
+            "pending": getattr(ma_orch._bus, "_pending", 0) if hasattr(ma_orch, "_bus") else 0,
+        },
+        "task_queue": {
+            "size": len(ma_orch._queue) if hasattr(ma_orch, "_queue") else 0,
+        },
+        "running": getattr(ma_orch, "_running", False),
+    }
+
+
+@router.get("/multiagent/dispatch", tags=["multiagent"])
+async def dispatch_to_agent(
+    agent_name: str,
+    message: str,
+) -> dict[str, Any]:
+    """Dispatch a message directly to a specific multiagent agent.
+
+    Bypasses the router and sends the message straight to the named
+    agent. Useful for the desktop UI to invoke specific capabilities.
+    """
+    orch = get_orchestrator()
+    adapter = orch.router.get_agent(agent_name)
+
+    if adapter is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agent_name}' not found. "
+                   f"Available: {orch.router.agent_names}",
+        )
+
+    context = {"session_id": "rest-dispatch", "mode": "automatic"}
+    response = await adapter.handle(message, context)
+
+    return {
+        "agent": agent_name,
+        "response": response,
+    }
+
+
 __all__ = ["router"]
