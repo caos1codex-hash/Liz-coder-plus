@@ -142,6 +142,7 @@ class TestGlmProvider:
     async def test_close(self):
         provider = GlmProvider(api_key="test-key")
         mock_client = AsyncMock()
+        mock_client.is_closed = False
         provider._client = mock_client
         await provider.close()
         mock_client.aclose.assert_called_once()
@@ -304,6 +305,7 @@ class TestQwenProvider:
     async def test_close(self):
         provider = QwenProvider(api_key="test-key")
         mock_client = AsyncMock()
+        mock_client.is_closed = False
         provider._client = mock_client
         await provider.close()
         mock_client.aclose.assert_called_once()
