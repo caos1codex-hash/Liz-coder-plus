@@ -328,6 +328,63 @@ async def _initialize_llm(orchestrator: object) -> None:
                 ))
                 registered_count += 1
 
+        # GLM (ZhipuAI)
+        glm_key = os.getenv("GLM_API_KEY", "")
+        if glm_key:
+            glm_models = [
+                "glm-4-plus",
+                "glm-4-long",
+                "glm-4-flash",
+                "glm-4-air",
+                "glm-4v-plus",
+            ]
+            for model_id in glm_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.GLM,
+                    display_name=model_id,
+                    description=f"GLM (ZhipuAI) model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=128000, max_output_tokens=4096,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="GLM_API_KEY",
+                    base_url="https://open.bigmodel.cn/api/paas/v4",
+                ))
+                registered_count += 1
+
+        # Qwen (Alibaba Cloud)
+        qwen_key = os.getenv("QWEN_API_KEY", "")
+        if qwen_key:
+            qwen_models = [
+                "qwen-max",
+                "qwen-plus",
+                "qwen-turbo",
+                "qwen-long",
+                "qwen2.5-coder-32b-instruct",
+                "qwen-vl-max",
+            ]
+            for model_id in qwen_models:
+                if model_id in mm.list_models():
+                    continue
+                mm.register(ModelInfo(
+                    model_id=model_id,
+                    provider=ModelProvider.QWEN,
+                    display_name=model_id,
+                    description=f"Qwen (Alibaba Cloud) model: {model_id}",
+                    capabilities=ModelCapabilities(
+                        chat=True, streaming=True, function_calling=True,
+                        context_window=131072, max_output_tokens=8192,
+                    ),
+                    status=ModelStatus.ACTIVE,
+                    api_key_env="QWEN_API_KEY",
+                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ))
+                registered_count += 1
+
         # Initialize the ModelManager.
         await mm.initialize()
 
