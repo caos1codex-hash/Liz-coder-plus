@@ -70,7 +70,7 @@ class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     """
 
-    version: str = "0.13.0"
+    version: str = "0.14.0"
     environment: Environment = "development"
     ai: AIConfig = Field(default_factory=AIConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
