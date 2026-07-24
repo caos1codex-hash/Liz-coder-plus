@@ -35,6 +35,9 @@
     <SelfContained>true</SelfContained>
     <AppxPackage>false</AppxPackage>
 
+    <!-- Skip PRI generation (avoids MSB4062 on CI runners without VS extensions) -->
+    <GeneratePriFileOnBuild>false</GeneratePriFileOnBuild>
+
     <!-- App icon metadata -->
     <ApplicationIcon></ApplicationIcon>
     <PackageId>LizCoderPlus.Desktop</PackageId>

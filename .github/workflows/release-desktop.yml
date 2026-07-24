@@ -24,51 +24,19 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install Windows Desktop workload
+      - name: Restore
         shell: pwsh
-        run: |
-          Write-Host "=== .NET SDK ==="
-          dotnet --version
-          dotnet --list-sdks
-
-          Write-Host "=== Installing workload ==="
-          dotnet workload install windows-desktop --skip-sign-check
-
-          Write-Host "=== Workloads ==="
-          dotnet workload list
-
-          Write-Host "=== Checking for ExpandPriContent DLL ==="
-          $sdkDir = & dotnet --list-sdks | Select-Object -First 1 | ForEach-Object {
-            ($_ -split '\[')[0].Trim() -replace '^\s+',''
-          }
-          Write-Host "SDK Dir: $sdkDir"
-          $priPath = Join-Path $sdkDir "Microsoft\VisualStudio\v17.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll"
-          Write-Host "PRI DLL path: $priPath"
-          Write-Host "Exists: $(Test-Path $priPath)"
-          if (Test-Path $priPath) {
-            Get-Item $priPath | Select-Object FullName, Length
-          } else {
-            Write-Host "Searching for ExpandPriContent..."
-            Get-ChildItem -Path "C:\Program Files\dotnet" -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
-            Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
-          }
-
-      - name: Restore NuGet packages
-        shell: pwsh
-        run: |
-          dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
+        run: dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
 
       - name: Build Release
         shell: pwsh
-        run: |
-          dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:EnableMsixTooling=false
+        run: dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:EnableMsixTooling=false
 
       - name: Publish EXE
         shell: pwsh
-        run: |
-          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
+        run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
-      - name: Verify EXE exists
+      - name: Verify EXE and create ZIP
         shell: pwsh
         run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
@@ -77,7 +45,8 @@ jobs:
             Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
           } else {
             Write-Host "ERROR: EXE not found"
-            Get-ChildItem publish-output -ErrorAction SilentlyContinue
+            Get-ChildItem publish-output -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20
+            Get-ChildItem apps/desktop/bin -Recurse -Filter *.exe -ErrorAction SilentlyContinue
             exit 1
           }
 
