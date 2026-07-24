@@ -1,16 +1,16 @@
-name: Build Desktop EXE
+name: Build Desktop EXE + Installer
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g. v0.14.0)'
+        description: 'Version tag (e.g. v0.18.0)'
         required: false
-        default: 'v0.17.0'
+        default: 'v0.18.0'
 
 jobs:
   build:
-    name: Compile WinUI 3 EXE
+    name: Compile WinUI 3 + Inno Setup Installer
     runs-on: windows-2022
     permissions:
       contents: write
@@ -27,38 +27,21 @@ jobs:
       - name: Patch MSBuild extensions from VS2022
         shell: pwsh
         run: |
-          # Find VS2022 installation
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Write-Host "VS2022 Path: $vsPath"
 
-          # Get the active .NET SDK version from global.json
           $sdkVersion = dotnet --version
           Write-Host "SDK Version: $sdkVersion"
 
-          # Source: VS2022 MSBuild extension DLLs
           $srcBase = "$vsPath\MSBuild\Microsoft\VisualStudio\v17.0"
-          Write-Host "Source: $srcBase"
-          Get-ChildItem $srcBase -Directory | ForEach-Object { Write-Host "  $($_.Name)" }
-
-          # Destination: .NET SDK extension path
           $sdkBase = "C:\Program Files\dotnet\sdk\$sdkVersion\Microsoft\VisualStudio\v17.0"
           New-Item -ItemType Directory -Path $sdkBase -Force | Out-Null
-          Write-Host "Destination: $sdkBase"
 
-          # Copy AppxPackage folder (contains ExpandPriContent and other tasks)
           if (Test-Path "$srcBase\AppxPackage") {
             Copy-Item "$srcBase\AppxPackage" -Destination "$sdkBase\AppxPackage" -Recurse -Force
-            Write-Host "Copied AppxPackage"
-            Get-ChildItem "$sdkBase\AppxPackage" -Filter "*.dll" | ForEach-Object {
-              Write-Host "  $($_.Name) ($([math]::Round($_.Length/1KB)) KB)"
-            }
+            Write-Host "Copied AppxPackage OK"
           } else {
             Write-Host "WARNING: AppxPackage not found in VS2022"
-            # Search for the DLL anywhere in VS
-            $found = Get-ChildItem $vsPath -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3
-            foreach ($f in $found) {
-              Write-Host "  Found: $($f.FullName)"
-            }
           }
 
       - name: Restore
@@ -73,32 +56,129 @@ jobs:
         shell: pwsh
         run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
-      - name: Verify EXE and create ZIP
+      - name: Verify EXE
         shell: pwsh
         run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
             $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
-            Write-Host "SUCCESS: EXE ($size MB)"
-            Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
+            $fileCount = (Get-ChildItem publish-output -File).Count
+            Write-Host "SUCCESS: EXE ($size MB), $fileCount files total"
           } else {
-            Write-Host "ERROR: EXE not found"
-            Get-ChildItem publish-output -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20
-            Get-ChildItem apps/desktop/bin -Recurse -Filter *.exe -ErrorAction SilentlyContinue
+            Write-Host "ERROR: EXE not found in publish-output"
             exit 1
           }
 
-      - name: Upload ZIP artifact
+      # =============================================
+      # STEP: Build Inno Setup Installer (.exe)
+      # =============================================
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # Inno Setup 6 is usually pre-installed on windows-2022
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $innoPath) {
+            Write-Host "Inno Setup already installed: $innoPath"
+          } else {
+            Write-Host "Installing Inno Setup via Chocolatey..."
+            choco install innosetup -y --no-progress
+            $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $innoPath)) {
+              Write-Host "ERROR: Inno Setup not found after install"
+              exit 1
+            }
+          }
+          Write-Host "Inno Setup ready: $innoPath"
+
+      - name: Generate app icon for installer
+        shell: pwsh
+        run: |
+          # Create a simple .ico file if none exists
+          $icoPath = "apps\desktop\assets\app.ico"
+          if (-not (Test-Path $icoPath)) {
+            Write-Host "No icon found, creating a placeholder..."
+            # Use PowerShell to create a minimal valid ICO (16x16 blue square)
+            Add-Type -AssemblyName System.Drawing
+            $bmp = New-Object System.Drawing.Bitmap(32, 32)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.Clear([System.Drawing.Color]::FromArgb(66, 133, 244))  # Google Blue
+            $font = New-Object System.Drawing.Font("Arial", 18, [System.Drawing.FontStyle]::Bold)
+            $g.DrawString("L", $font, [System.Drawing.Brushes]::White, 4, 2)
+            $g.Dispose()
+            $icoPathDir = Split-Path $icoPath -Parent
+            if (-not (Test-Path $icoPathDir)) { New-Item -ItemType Directory -Path $icoPathDir -Force | Out-Null }
+            $stream = [System.IO.File]::Create($icoPath)
+            $bmp.Save($stream, [System.Drawing.Imaging.ImageFormat]::Icon)
+            $stream.Close()
+            $bmp.Dispose()
+            Write-Host "Icon created: $icoPath"
+          } else {
+            Write-Host "Icon found: $icoPath"
+          }
+
+      - name: Build Installer EXE
+        shell: pwsh
+        run: |
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $scriptPath = "apps\desktop\installer.iss"
+          Write-Host "Compiling installer..."
+          & $innoPath $scriptPath /Q
+          if (Test-Path "apps\desktop\installer-output\LizCoderPlus-Setup-*.exe") {
+            $installer = Get-Item "apps\desktop\installer-output\LizCoderPlus-Setup-*.exe" | Select-Object -First 1
+            $sizeMB = [math]::Round($installer.Length / 1MB, 2)
+            Write-Host "SUCCESS: Installer EXE ($sizeMB MB): $($installer.FullName)"
+            Copy-Item $installer.FullName "LizCoderPlus-Setup.exe" -Force
+          } else {
+            Write-Host "Looking in alternative paths..."
+            Get-ChildItem "apps\desktop" -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue
+            Get-ChildItem "." -Filter "LizCoderPlus-Setup*" -ErrorAction SilentlyContinue
+            Write-Host "ERROR: Installer EXE not found"
+            exit 1
+          }
+
+      # =============================================
+      # STEP: Upload both artifacts
+      # =============================================
+      - name: Upload Installer EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: LizCoderPlus-Installer
+          path: LizCoderPlus-Setup.exe
+          retention-days: 30
+
+      - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:
           name: LizCoderPlus-win-x64
-          path: LizCoderPlus-win-x64.zip
+          path: publish-output/
           retention-days: 30
 
+      # =============================================
+      # STEP: Create GitHub Release with both files
+      # =============================================
       - name: Create GitHub Release
         if: success()
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.event.inputs.version || 'v0.17.0' }}"
-          gh release create $tag LizCoderPlus-win-x64.zip --title "Liz Coder Plus $tag" --notes "Build automatico desde GitHub Actions" --prerelease
+          $tag = "${{ github.event.inputs.version || 'v0.18.0' }}"
+
+          # Delete existing release if it exists
+          $existing = gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Deleting existing release $tag"
+            gh release delete $tag --yes
+          }
+
+          # Create ZIP for the raw files
+          Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
+
+          # Create release with both files
+          gh release create $tag `
+            LizCoderPlus-Setup.exe `
+            LizCoderPlus-win-x64.zip `
+            --title "Liz Coder Plus $tag" `
+            --notes "Instalador profesional (.exe) y version portable (.zip). Ejecuta LizCoderPlus-Setup.exe para instalar como aplicacion de Windows." `
+            --prerelease
+
+          Write-Host "Release $tag created successfully"
