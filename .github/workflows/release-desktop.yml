@@ -24,6 +24,43 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Patch MSBuild extensions from VS2022
+        shell: pwsh
+        run: |
+          # Find VS2022 installation
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VS2022 Path: $vsPath"
+
+          # Get the active .NET SDK version from global.json
+          $sdkVersion = dotnet --version
+          Write-Host "SDK Version: $sdkVersion"
+
+          # Source: VS2022 MSBuild extension DLLs
+          $srcBase = "$vsPath\MSBuild\Microsoft\VisualStudio\v17.0"
+          Write-Host "Source: $srcBase"
+          Get-ChildItem $srcBase -Directory | ForEach-Object { Write-Host "  $($_.Name)" }
+
+          # Destination: .NET SDK extension path
+          $sdkBase = "C:\Program Files\dotnet\sdk\$sdkVersion\Microsoft\VisualStudio\v17.0"
+          New-Item -ItemType Directory -Path $sdkBase -Force | Out-Null
+          Write-Host "Destination: $sdkBase"
+
+          # Copy AppxPackage folder (contains ExpandPriContent and other tasks)
+          if (Test-Path "$srcBase\AppxPackage") {
+            Copy-Item "$srcBase\AppxPackage" -Destination "$sdkBase\AppxPackage" -Recurse -Force
+            Write-Host "Copied AppxPackage"
+            Get-ChildItem "$sdkBase\AppxPackage" -Filter "*.dll" | ForEach-Object {
+              Write-Host "  $($_.Name) ($([math]::Round($_.Length/1KB)) KB)"
+            }
+          } else {
+            Write-Host "WARNING: AppxPackage not found in VS2022"
+            # Search for the DLL anywhere in VS
+            $found = Get-ChildItem $vsPath -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3
+            foreach ($f in $found) {
+              Write-Host "  Found: $($f.FullName)"
+            }
+          }
+
       - name: Restore
         shell: pwsh
         run: dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
@@ -41,7 +78,7 @@ jobs:
         run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
             $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
-            Write-Host "SUCCESS: EXE found ($size MB)"
+            Write-Host "SUCCESS: EXE ($size MB)"
             Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
           } else {
             Write-Host "ERROR: EXE not found"
