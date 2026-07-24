@@ -24,14 +24,34 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Verify .NET version
+      - name: Install Windows Desktop workload
         shell: pwsh
         run: |
           Write-Host "=== .NET SDK ==="
           dotnet --version
           dotnet --list-sdks
+
+          Write-Host "=== Installing workload ==="
+          dotnet workload install windows-desktop --skip-sign-check
+
           Write-Host "=== Workloads ==="
           dotnet workload list
+
+          Write-Host "=== Checking for ExpandPriContent DLL ==="
+          $sdkDir = & dotnet --list-sdks | Select-Object -First 1 | ForEach-Object {
+            ($_ -split '\[')[0].Trim() -replace '^\s+',''
+          }
+          Write-Host "SDK Dir: $sdkDir"
+          $priPath = Join-Path $sdkDir "Microsoft\VisualStudio\v17.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll"
+          Write-Host "PRI DLL path: $priPath"
+          Write-Host "Exists: $(Test-Path $priPath)"
+          if (Test-Path $priPath) {
+            Get-Item $priPath | Select-Object FullName, Length
+          } else {
+            Write-Host "Searching for ExpandPriContent..."
+            Get-ChildItem -Path "C:\Program Files\dotnet" -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+            Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "Microsoft.Build.Packaging.Pri.Tasks.dll" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+          }
 
       - name: Restore NuGet packages
         shell: pwsh
