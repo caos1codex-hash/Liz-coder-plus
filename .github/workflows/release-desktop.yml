@@ -60,28 +60,23 @@ jobs:
             --self-contained true `
             -p:Platform=x64 `
             -p:PublishSingleFile=false `
-            -p:AppxPackage=false `
-            -o dist
+            -p:AppxPackage=false
 
-      - name: Verify .exe exists
+      - name: Verify .exe and create ZIP
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path dist -Filter "*.exe" -Recurse | Select-Object -First 1
+          $publishDir = "${{ env.PROJECT_DIR }}\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+          $exe = Get-ChildItem -Path $publishDir -Filter "LizCoderPlus*.exe" | Select-Object -First 1
           if ($exe) {
             $size = [math]::Round($exe.Length / 1MB, 2)
-            echo "FOUND: $($exe.FullName) ($size MB)"
+            echo "FOUND: $($exe.Name) ($size MB)"
+            Compress-Archive -Path $publishDir\* -DestinationPath LizCoderPlus-${{ github.event.inputs.version || '0.14.0' }}-win-x64.zip -Force
+            echo "ZIP created!"
           } else {
-            echo "ERROR: No .exe found!"
-            Get-ChildItem -Path dist | Select-Object Name, Length
+            echo "ERROR: .exe not found in $publishDir"
+            Get-ChildItem -Path $publishDir -ErrorAction SilentlyContinue | Select-Object Name, Length
             exit 1
           }
-
-      - name: Create ZIP
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/* -DestinationPath LizCoderPlus-${{ github.event.inputs.version || '0.14.0' }}-win-x64.zip -Force
-          $size = [math]::Round((Get-Item "*.zip").Length / 1MB, 2)
-          echo "ZIP created: $size MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
