@@ -11,46 +11,26 @@ on:
 jobs:
   build:
     name: Compile WinUI 3 EXE
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: write
-    env:
-      DOTNET_ROLL_FORWARD: LatestMajor
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install .NET 8.0 SDK (exact)
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Verify .NET version
         shell: pwsh
         run: |
-          # Install specific .NET 8 SDK
-          Invoke-WebRequest -Uri "https://dot.net/v1/dotnet-install.ps1" -OutFile dotnet-install.ps1
-          .\dotnet-install.ps1 -Channel 8.0 -InstallDir "$env:LOCALAPPDATA\Microsoft\dotnet"
-          $env:Path = "$env:LOCALAPPDATA\Microsoft\dotnet;$env:Path"
+          Write-Host "=== .NET SDK ==="
           dotnet --version
           dotnet --list-sdks
-          # Pin to .NET 8 via global.json
-          @{
-            sdk = @{
-              version = "8.0.423"
-              rollForward = "latestFeature"
-            }
-          } | ConvertTo-Json | Set-Content -Path global.json
-          echo "DOTNET_ROOT=$env:LOCALAPPDATA\Microsoft\dotnet" >> $env:GITHUB_ENV
-          echo "$env:LOCALAPPDATA\Microsoft\dotnet" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Verify .NET 8
-        shell: pwsh
-        run: |
-          dotnet --version
-          dotnet --list-sdks
-          dotnet --list-runtimes
-
-      - name: Install Windows App SDK workload
-        shell: pwsh
-        run: |
-          dotnet workload install windows-desktop --skip-sign-check
+          Write-Host "=== Workloads ==="
           dotnet workload list
 
       - name: Restore NuGet packages
@@ -73,7 +53,7 @@ jobs:
         run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
             $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
-            Write-Host "EXE found: $size MB"
+            Write-Host "SUCCESS: EXE found ($size MB)"
             Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
           } else {
             Write-Host "ERROR: EXE not found"
