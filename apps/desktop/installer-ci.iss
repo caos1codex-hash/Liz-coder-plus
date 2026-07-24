@@ -42,7 +42,7 @@ Source: "publish-output\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdir
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Comment: "Liz Coder Plus - AI Desktop Assistant"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Liz Coder Plus despues de instalar"; Flags: nowait postinstall shellexec skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Liz Coder Plus despues de instalar"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
