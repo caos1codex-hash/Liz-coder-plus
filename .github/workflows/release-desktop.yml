@@ -1,4 +1,3 @@
-# Combined debug + release workflow
 name: Build Desktop Release
 
 on:
@@ -26,28 +25,29 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Pin to .NET 8 SDK
+      - name: Install Windows Desktop workload
         shell: pwsh
         run: |
-          $globalJson = '{"sdk":{"version":"8.0.423","rollForward":"latestFeature"}}'
-          $globalJson | Out-File -FilePath $env:GITHUB_WORKSPACE\global.json -Encoding utf8
-          dotnet --version 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Encoding utf8
-
-      - name: Install workloads
-        shell: pwsh
-        run: |
+          "=== .NET Version ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Encoding utf8
+          dotnet --version 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          "=== Workload install ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          dotnet workload install windows-desktop 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           "=== Workloads ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet workload install windows-desktop 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          dotnet workload list 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
 
       - name: Restore
         shell: pwsh
         run: |
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           "=== Restore ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
 
       - name: Build
         shell: pwsh
         run: |
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           "=== Build ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
 
@@ -55,24 +55,26 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           "=== Publish ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false -o publish-output 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
 
       - name: Create ZIP
         shell: pwsh
         run: |
-          "=== Output Files ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          "=== Files ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           Get-ChildItem publish-output -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name) $($_.Length)" } | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
 
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
             $exeSize = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
             "EXE FOUND: $exeSize MB" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
             Compress-Archive -Path publish-output\* -DestinationPath release.zip -Force
-            $zipSize = [math]::Round((Get-Item release.zip).Length / 1MB, 2)
-            "ZIP CREATED: $zipSize MB" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+            "ZIP OK" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
           } else {
             "ERROR: exe not found" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
             Get-ChildItem -Recurse apps/desktop\bin -Filter "*.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+            exit 1
           }
 
       - name: Upload ZIP
