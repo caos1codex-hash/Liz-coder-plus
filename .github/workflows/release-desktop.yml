@@ -26,11 +26,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.423'
+
       - name: Verify .NET version
         shell: pwsh
-        run: |
-          dotnet --version
-          dotnet --list-sdks
+        run: dotnet --version
 
       - name: Install Windows Desktop workload
         shell: pwsh
