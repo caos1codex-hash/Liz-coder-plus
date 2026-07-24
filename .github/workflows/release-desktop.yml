@@ -1,6 +1,7 @@
 # ============================================================
 # GitHub Actions: Build & Release WinUI 3 Desktop .exe
 # Triggers on version tag push (v*.*.*)
+# Uses global.json to pin .NET 8 SDK
 # ============================================================
 
 name: Build Desktop Release
@@ -16,11 +17,6 @@ on:
         required: true
         default: '0.14.0'
 
-env:
-  DOTNET_VERSION: '8.0.423'
-  PROJECT_DIR: apps/desktop
-  CONFIGURATION: Release
-
 jobs:
   build-windows:
     name: Build Windows Desktop .exe
@@ -30,59 +26,59 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Pin .NET 8 SDK
+      - name: Verify .NET version
         shell: pwsh
         run: |
-          '{"sdk":{"version":"8.0.423","rollForward":"latestFeature"}}' | Out-File -FilePath global.json -Encoding utf8
           dotnet --version
-
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
+          dotnet --list-sdks
 
       - name: Install Windows Desktop workload
         shell: pwsh
-        run: |
-          dotnet workload install windows-desktop
-          dotnet workload list
+        run: dotnet workload install windows-desktop
 
       - name: Restore
         shell: pwsh
-        run: dotnet restore ${{ env.PROJECT_DIR }}/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
+        run: dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
 
       - name: Publish win-x64
         shell: pwsh
         run: |
-          dotnet publish ${{ env.PROJECT_DIR }}/LizCoderPlus.Desktop.csproj `
-            -c ${{ env.CONFIGURATION }} `
+          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj `
+            -c Release `
             -r win-x64 `
             --self-contained true `
             -p:Platform=x64 `
             -p:PublishSingleFile=false `
             -p:AppxPackage=false
 
-      - name: Verify .exe and create ZIP
+      - name: Find .exe and create ZIP
         shell: pwsh
         run: |
-          $publishDir = "${{ env.PROJECT_DIR }}\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
-          $exe = Get-ChildItem -Path $publishDir -Filter "LizCoderPlus*.exe" | Select-Object -First 1
-          if ($exe) {
-            $size = [math]::Round($exe.Length / 1MB, 2)
-            echo "FOUND: $($exe.Name) ($size MB)"
-            Compress-Archive -Path $publishDir\* -DestinationPath LizCoderPlus-${{ github.event.inputs.version || '0.14.0' }}-win-x64.zip -Force
-            echo "ZIP created!"
+          $publishDir = "apps\desktop\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+          if (Test-Path $publishDir) {
+            $exe = Get-ChildItem -Path $publishDir -Filter "LizCoderPlus*.exe" | Select-Object -First 1
+            if ($exe) {
+              $size = [math]::Round($exe.Length / 1MB, 2)
+              echo "EXE FOUND: $($exe.Name) ($size MB)"
+              Compress-Archive -Path "$publishDir\*" -DestinationPath "LizCoderPlus-0.14.0-win-x64.zip" -Force
+              $zipSize = [math]::Round((Get-Item "LizCoderPlus-0.14.0-win-x64.zip").Length / 1MB, 2)
+              echo "ZIP CREATED: $zipSize MB"
+            } else {
+              echo "ERROR: No .exe in $publishDir"
+              Get-ChildItem $publishDir | Select Name
+              exit 1
+            }
           } else {
-            echo "ERROR: .exe not found in $publishDir"
-            Get-ChildItem -Path $publishDir -ErrorAction SilentlyContinue | Select-Object Name, Length
+            echo "ERROR: Publish dir not found: $publishDir"
+            Get-ChildItem "apps\desktop\bin" -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select FullName
             exit 1
           }
 
-      - name: Upload artifact
+      - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
           name: LizCoderPlus-win-x64
-          path: "*.zip"
+          path: LizCoderPlus-0.14.0-win-x64.zip
           retention-days: 30
 
   create-release:
@@ -93,33 +89,29 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: LizCoderPlus-win-x64
           path: dist/
 
-      - name: Create Release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.inputs.version || '0.14.0' }}"
-          TAG="v${VERSION}"
-
-          gh release create "$TAG" \
+          gh release create v0.14.0 \
             dist/*.zip \
             --repo ${{ github.repository }} \
-            --title "Liz Coder Plus v${VERSION}" \
-            --notes "## Liz Coder Plus v${VERSION}
+            --title "Liz Coder Plus v0.14.0" \
+            --notes "## Liz Coder Plus v0.14.0
 
           ### Descarga
-          - **Windows x64**: ZIP incluido
+          - **Windows x64**: LizCoderPlus-0.14.0-win-x64.zip
 
           ### Instalacion
           1. Descarga el ZIP
           2. Extrae el contenido
           3. Ejecuta LizCoderPlus.Desktop.exe" \
-            || echo "Release may already exist, skipping"
+            --generate-notes 2>&1 || true
+
+          echo "Release created!"
