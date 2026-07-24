@@ -1,0 +1,74 @@
+# Diagnostic workflow: captures full build output as downloadable artifact
+name: Debug Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version'
+        required: true
+        default: '0.14.0'
+
+jobs:
+  debug-build:
+    name: Diagnose Build Error
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install workloads
+        shell: pwsh
+        run: |
+          echo "=== Installing workloads ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Encoding utf8
+          dotnet workload install windows-desktop 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+          echo "" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          echo "=== Workload list ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          dotnet workload list 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+          echo "" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          echo "=== dotnet --info ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          dotnet --info 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+
+      - name: Restore
+        shell: pwsh
+        run: |
+          echo "=== dotnet restore ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+          echo "" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+
+      - name: Build (capture all output)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          echo "=== dotnet build ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -v detailed 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+
+      - name: Publish (capture all output)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          echo "" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          echo "=== dotnet publish ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=true -p:PublishTrimmed=false -v detailed 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\debug.log -Append
+
+      - name: List output files
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          echo "" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          echo "=== Files in bin/Release ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+          Get-ChildItem -Recurse apps/desktop/bin/Release -ErrorAction SilentlyContinue | Select-Object FullName, Length | Out-File -FilePath $env:GITHUB_WORKSPACE\debug.log -Append -Encoding utf8
+
+      - name: Upload debug log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-build-log
+          path: debug.log
+          retention-days: 7
