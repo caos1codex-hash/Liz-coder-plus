@@ -1,4 +1,4 @@
-name: Build Desktop EXE + Installer
+name: Build Desktop Installer
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: Compile WinUI 3 + Inno Setup Installer
+    name: Build WinUI 3 + Installer EXE
     runs-on: windows-2022
     permissions:
       contents: write
@@ -24,23 +24,26 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Patch MSBuild extensions from VS2022
+      - name: Patch MSBuild from VS2022
         shell: pwsh
         run: |
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $sdkVersion = dotnet --version
-          $srcBase = "$vsPath\MSBuild\Microsoft\VisualStudio\v17.0"
-          $sdkBase = "C:\Program Files\dotnet\sdk\$sdkVersion\Microsoft\VisualStudio\v17.0"
-          New-Item -ItemType Directory -Path $sdkBase -Force | Out-Null
-          if (Test-Path "$srcBase\AppxPackage") {
-            Copy-Item "$srcBase\AppxPackage" -Destination "$sdkBase\AppxPackage" -Recurse -Force
+          $src = "$vsPath\MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage"
+          $dst = "C:\Program Files\dotnet\sdk\$sdkVersion\Microsoft\VisualStudio\v17.0\AppxPackage"
+          if (Test-Path $src) {
+            New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+            Copy-Item $src -Destination $dst -Recurse -Force
+            Write-Host "AppxPackage copied OK"
+          } else {
+            Write-Host "WARNING: $src not found"
           }
 
       - name: Restore
         shell: pwsh
         run: dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
 
-      - name: Build Release
+      - name: Build
         shell: pwsh
         run: dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:EnableMsixTooling=false
 
@@ -48,64 +51,53 @@ jobs:
         shell: pwsh
         run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
-      - name: Find launcher EXE
+      - name: Verify publish
         shell: pwsh
         run: |
-          # List top files
+          Write-Host "=== Top 15 files by size ==="
           Get-ChildItem publish-output -File | Sort-Object Length -Descending | Select-Object -First 15 Name, @{N='MB';E={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
+          $total = (Get-ChildItem publish-output -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host "Total: $((Get-ChildItem publish-output -File).Count) files, $([math]::Round($total/1MB)) MB"
 
-          # Find the app entry point (could be .exe or we check for apphost)
-          $exe = Get-ChildItem publish-output -Filter "LizCoderPlus.Desktop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($exe) {
-            Write-Host "LAUNCHER: LizCoderPlus.Desktop.exe"
-            Set-Content "launcher.txt" "LizCoderPlus.Desktop.exe"
-          } else {
-            # WinUI3 might publish with apphost - find the main exe
-            $dll = Get-ChildItem publish-output -Filter "LizCoderPlus.Desktop.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($dll) {
-              Write-Host "LAUNCHER: LizCoderPlus.Desktop.dll (WinUI3 apphost mode)"
-              Set-Content "launcher.txt" "LizCoderPlus.Desktop.dll"
-            } else {
-              Write-Host "ERROR: No launcher found"
-              exit 1
-            }
-          }
-
-      - name: Build Installer with Inno Setup
+      - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
-          $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $innoPath)) {
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup not found, installing..."
             choco install innosetup -y --no-progress
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           }
+          Write-Host "ISCC: $iscc"
 
-          # Read the launcher name
-          $launcher = Get-Content "launcher.txt".Trim()
-          Write-Host "Building installer for: $launcher"
+          # Copy the .iss template AS-IS (no modifications needed)
+          # The template already references LizCoderPlus.Desktop.exe
+          Copy-Item "apps\desktop\installer-ci.iss" "installer-build.iss" -Force
 
-          # Read ISS template and replace the exe name
-          $iss = Get-Content "apps\desktop\installer-ci.iss" -Raw
-          $iss = $iss -replace 'LizCoderPlus\.Desktop\.exe', $launcher
-          Set-Content "installer-build.iss" -Value $iss
+          Write-Host "=== installer-build.iss contents ==="
+          Get-Content "installer-build.iss" | ForEach-Object { $i = 0 } { $i++; "$i : $_" }
 
-          # Compile
-          & $innoPath installer-build.iss
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Inno Setup failed"
+          # Compile the installer
+          & $iscc "installer-build.iss"
+          $exitCode = $LASTEXITCODE
+          Write-Host "ISCC exit code: $exitCode"
+
+          if ($exitCode -ne 0) {
+            Write-Host "ERROR: Inno Setup compilation failed"
             exit 1
           }
 
-          $setupExe = Get-Item "installer-output\LizCoderPlus-Setup-*.exe" | Select-Object -First 1
-          if ($setupExe) {
-            Copy-Item $setupExe.FullName "LizCoderPlus-Setup.exe" -Force
-            $mb = [math]::Round($setupExe.Length / 1MB, 2)
-            Write-Host "SUCCESS: LizCoderPlus-Setup.exe ($mb MB)"
+          # Find output
+          $setup = Get-Item "installer-output\LizCoderPlus-Setup-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($setup) {
+            Copy-Item $setup.FullName "LizCoderPlus-Setup.exe" -Force
+            Write-Host "SUCCESS: LizCoderPlus-Setup.exe ($([math]::Round($setup.Length/1MB, 2)) MB)"
           } else {
-            Write-Host "ERROR: Setup not found"
+            Write-Host "ERROR: Setup EXE not found in installer-output"
             exit 1
           }
 
-      - name: Upload Installer
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: LizCoderPlus-Installer
@@ -119,6 +111,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = "${{ github.event.inputs.version || 'v0.18.0' }}"
-          $existing = gh release view $tag 2>$null
+          gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) { gh release delete $tag --yes }
-          gh release create $tag LizCoderPlus-Setup.exe --title "Liz Coder Plus $tag" --notes "Instalador profesional (.exe). Descarga y ejecuta LizCoderPlus-Setup.exe para instalar." --prerelease
+          gh release create $tag LizCoderPlus-Setup.exe --title "Liz Coder Plus $tag" --notes "Instalador profesional para Windows. Descarga LizCoderPlus-Setup.exe, haz doble click y sigue las instrucciones." --prerelease
+          Write-Host "Release $tag created"
