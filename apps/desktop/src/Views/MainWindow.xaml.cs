@@ -61,6 +61,9 @@ public sealed partial class MainWindow : Window
         this.InitializeComponent();
         Title = "Liz Coder Plus — AI Desktop Assistant";
 
+        // Set initial window size (safety net)
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+
         _dispatcher = DispatcherQueue.GetForCurrentThread()!;
         _chat = new ChatService("ws://localhost:8000/ws/chat");
 

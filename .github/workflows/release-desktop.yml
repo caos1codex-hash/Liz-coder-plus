@@ -6,7 +6,7 @@ on:
       version:
         description: 'Version tag (e.g. v0.14.0)'
         required: false
-        default: 'v0.14.0'
+        default: 'v0.17.0'
 
 jobs:
   build:
@@ -100,5 +100,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.event.inputs.version || 'v0.14.0' }}"
+          $tag = "${{ github.event.inputs.version || 'v0.17.0' }}"
           gh release create $tag LizCoderPlus-win-x64.zip --title "Liz Coder Plus $tag" --notes "Build automatico desde GitHub Actions" --prerelease

@@ -20,8 +20,8 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.13.0</Version>
-    <ApplicationVersion>0.13.0</ApplicationVersion>
+    <Version>0.17.0</Version>
+    <ApplicationVersion>0.17.0</ApplicationVersion>
     <Company>Liz Coder Plus</Company>
     <Product>Liz Coder Plus Desktop</Product>
     <Description>Sistema Operativo de IA Personal - Asistente de Escritorio con Multi-Agentes</Description>
