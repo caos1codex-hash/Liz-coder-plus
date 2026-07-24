@@ -1,23 +1,22 @@
-name: Build Desktop Release
+name: Build Desktop EXE
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version'
-        required: true
-        default: '0.14.0'
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+        description: 'Version tag (e.g. v0.14.0)'
+        required: false
+        default: 'v0.14.0'
 
 jobs:
   build:
-    name: Build and Package
+    name: Compile WinUI 3 EXE
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup .NET 8
@@ -25,70 +24,53 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install Windows Desktop workload
+      - name: Install Windows App SDK workload
         shell: pwsh
         run: |
-          "=== .NET Version ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Encoding utf8
-          dotnet --version 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Workload install ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet workload install windows-desktop 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Workloads ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet workload list 2>&1 | Tee-Object -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append
+          dotnet workload install windows-desktop --skip-sign-check
+          dotnet workload list
 
-      - name: Restore
+      - name: Restore NuGet packages
         shell: pwsh
         run: |
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Restore ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
 
-      - name: Build
+      - name: Build Release
         shell: pwsh
         run: |
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Build ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          dotnet build apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:EnableMsixTooling=false
 
-      - name: Publish
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Publish ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false -o publish-output 2>&1 | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-
-      - name: Create ZIP
+      - name: Publish EXE
         shell: pwsh
         run: |
-          "" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          "=== Files ===" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-          Get-ChildItem publish-output -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name) $($_.Length)" } | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
+      - name: Verify EXE exists
+        shell: pwsh
+        run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
-            $exeSize = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
-            "EXE FOUND: $exeSize MB" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-            Compress-Archive -Path publish-output\* -DestinationPath release.zip -Force
-            "ZIP OK" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+            $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
+            Write-Host "EXE found: $size MB"
+            Compress-Archive -Path publish-output\* -DestinationPath LizCoderPlus-win-x64.zip -Force
           } else {
-            "ERROR: exe not found" | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
-            Get-ChildItem -Recurse apps/desktop\bin -Filter "*.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } | Out-File -FilePath $env:GITHUB_WORKSPACE\build-output.txt -Append -Encoding utf8
+            Write-Host "ERROR: EXE not found"
+            Get-ChildItem publish-output -ErrorAction SilentlyContinue
+            Get-ChildItem apps/desktop/bin -Recurse -Filter *.exe -ErrorAction SilentlyContinue
             exit 1
           }
 
-      - name: Upload ZIP
+      - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: LizCoderPlus-win-x64
-          path: release.zip
+          path: LizCoderPlus-win-x64.zip
           retention-days: 30
 
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build-output.txt
-          retention-days: 7
+      - name: Create GitHub Release
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.inputs.version || 'v0.14.0' }}"
+          gh release create $tag LizCoderPlus-win-x64.zip --title "Liz Coder Plus $tag" --notes "Build automatico desde GitHub Actions" --prerelease
