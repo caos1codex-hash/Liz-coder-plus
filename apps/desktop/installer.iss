@@ -29,7 +29,7 @@ DisableProgramGroupPage=yes
 ; Output
 OutputDir=installer-output
 OutputBaseFilename=LizCoderPlus-Setup-{#MyAppVersion}
-SetupIconFile=..\assets\app.ico
+; SetupIconFile=..\assets\app.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 

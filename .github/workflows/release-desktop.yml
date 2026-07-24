@@ -56,17 +56,31 @@ jobs:
         shell: pwsh
         run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
-      - name: Verify EXE
+      - name: Verify EXE and list files
         shell: pwsh
         run: |
-          if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
-            $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
-            $fileCount = (Get-ChildItem publish-output -File).Count
-            Write-Host "SUCCESS: EXE ($size MB), $fileCount files total"
+          Write-Host "=== Contents of publish-output ==="
+          Get-ChildItem publish-output -File | Select-Object Name, @{N='SizeMB';E={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
+
+          # WinUI 3 with OutputType=WinExe publishes as .exe
+          $exe = Get-ChildItem publish-output -Filter "*.exe" | Select-Object -First 1
+          if ($exe) {
+            $size = [math]::Round($exe.Length / 1MB, 2)
+            Write-Host "SUCCESS: $($exe.Name) ($size MB)"
           } else {
-            Write-Host "ERROR: EXE not found in publish-output"
-            exit 1
+            # Maybe it published as .dll with a .exe wrapper
+            $dll = Get-ChildItem publish-output -Filter "LizCoderPlus*" | Select-Object -First 1
+            if ($dll) {
+              Write-Host "Found: $($dll.Name) ($([math]::Round($dll.Length/1MB,2)) MB)"
+              Write-Host "Total files: $((Get-ChildItem publish-output -File).Count)"
+            } else {
+              Write-Host "ERROR: No LizCoderPlus files found"
+              exit 1
+            }
           }
+
+          $fileCount = (Get-ChildItem publish-output -File).Count
+          Write-Host "Total files in publish-output: $fileCount"
 
       # =============================================
       # STEP: Build Inno Setup Installer (.exe)
