@@ -28,15 +28,12 @@ jobs:
         shell: pwsh
         run: |
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VS2022 Path: $vsPath"
           $sdkVersion = dotnet --version
-          Write-Host "SDK Version: $sdkVersion"
           $srcBase = "$vsPath\MSBuild\Microsoft\VisualStudio\v17.0"
           $sdkBase = "C:\Program Files\dotnet\sdk\$sdkVersion\Microsoft\VisualStudio\v17.0"
           New-Item -ItemType Directory -Path $sdkBase -Force | Out-Null
           if (Test-Path "$srcBase\AppxPackage") {
             Copy-Item "$srcBase\AppxPackage" -Destination "$sdkBase\AppxPackage" -Recurse -Force
-            Write-Host "Copied AppxPackage OK"
           }
 
       - name: Restore
@@ -51,123 +48,60 @@ jobs:
         shell: pwsh
         run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:EnableMsixTooling=false -p:AppxPackage=false -o publish-output
 
-      - name: List published files and find launcher
+      - name: Find launcher EXE
         shell: pwsh
         run: |
-          Write-Host "=== All files in publish-output ==="
-          Get-ChildItem publish-output -File | Sort-Object Length -Descending | Select-Object -First 20 Name, @{N='SizeMB';E={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
+          # List top files
+          Get-ChildItem publish-output -File | Sort-Object Length -Descending | Select-Object -First 15 Name, @{N='MB';E={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
 
-          # For WinUI 3 WinExe, look for the entry point
-          # It could be LizCoderPlus.Desktop.exe, or we need the apphost
-          $launcher = $null
-          $candidates = @("LizCoderPlus.Desktop.exe", "LizCoderPlus.Desktop.dll")
-          foreach ($c in $candidates) {
-            if (Test-Path "publish-output\$c") {
-              $launcher = $c
-              Write-Host "Found launcher: $c"
-              break
-            }
-          }
-          if (-not $launcher) {
-            # List ALL exe files
-            Write-Host "=== EXE files found ==="
-            Get-ChildItem publish-output -Filter "*.exe" | ForEach-Object { Write-Host "  $($_.Name)" }
-            # Use first non-system exe
-            $exes = Get-ChildItem publish-output -Filter "*.exe" | Where-Object { $_.Name -notmatch "createdump|pdb" }
-            if ($exes) {
-              $launcher = $exes[0].Name
-              Write-Host "Using: $launcher"
-            }
-          }
-
-          if ($launcher) {
-            # Save launcher name for Inno Setup
-            Set-Content -Path "launcher-name.txt" -Value $launcher
-            $fileCount = (Get-ChildItem publish-output -File).Count
-            $totalSize = [math]::Round(((Get-ChildItem publish-output -File | Measure-Object -Property Length -Sum).Sum / 1MB), 2)
-            Write-Host "Total: $fileCount files, $totalSize MB"
+          # Find the app entry point (could be .exe or we check for apphost)
+          $exe = Get-ChildItem publish-output -Filter "LizCoderPlus.Desktop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exe) {
+            Write-Host "LAUNCHER: LizCoderPlus.Desktop.exe"
+            Set-Content "launcher.txt" "LizCoderPlus.Desktop.exe"
           } else {
-            Write-Host "ERROR: No launcher found!"
-            exit 1
+            # WinUI3 might publish with apphost - find the main exe
+            $dll = Get-ChildItem publish-output -Filter "LizCoderPlus.Desktop.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($dll) {
+              Write-Host "LAUNCHER: LizCoderPlus.Desktop.dll (WinUI3 apphost mode)"
+              Set-Content "launcher.txt" "LizCoderPlus.Desktop.dll"
+            } else {
+              Write-Host "ERROR: No launcher found"
+              exit 1
+            }
           }
 
-      - name: Build Inno Setup Installer
+      - name: Build Installer with Inno Setup
         shell: pwsh
         run: |
           $innoPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $innoPath)) {
-            Write-Host "Installing Inno Setup..."
             choco install innosetup -y --no-progress
           }
-          Write-Host "Building installer..."
 
-          $launcher = Get-Content "launcher-name.txt"
-          Write-Host "Launcher: $launcher"
+          # Read the launcher name
+          $launcher = Get-Content "launcher.txt".Trim()
+          Write-Host "Building installer for: $launcher"
 
-          # Generate the .iss file dynamically based on what was published
-          $issContent = @"
-          ; Auto-generated Inno Setup script
-          #define MyAppName "Liz Coder Plus"
-          #define MyAppVersion "0.18.0"
-          #define MyAppExeName "$launcher"
+          # Read ISS template and replace the exe name
+          $iss = Get-Content "apps\desktop\installer-ci.iss" -Raw
+          $iss = $iss -replace 'LizCoderPlus\.Desktop\.exe', $launcher
+          Set-Content "installer-build.iss" -Value $iss
 
-          [Setup]
-          AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
-          AppName={#MyAppName}
-          AppVersion={#MyAppVersion}
-          AppPublisher=Liz Coder Plus
-          DefaultDirName={autopf}\{#MyAppName}
-          DefaultGroupName={#MyAppName}
-          DisableProgramGroupPage=yes
-          OutputDir=installer-output
-          OutputBaseFilename=LizCoderPlus-Setup-{#MyAppVersion}
-          Compression=lzma2/ultra64
-          SolidCompression=yes
-          WizardStyle=modern
-          PrivilegesRequired=admin
-          ArchitecturesAllowed=x64
-          ArchitecturesInstallIn64BitMode=x64
-          UninstallDisplayIcon={app}\{#MyAppExeName}
-          UninstallDisplayName={#MyAppName}
-          VersionInfoVersion={#MyAppVersion}
-
-          [Languages]
-          Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
-          Name: "english"; MessagesFile: "compiler:Default.isl"
-
-          [Tasks]
-          Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; Flags: checked
-
-          [Files]
-          Source: "publish-output\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,*.xml"
-
-          [Icons]
-          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; Comment: "Liz Coder Plus - AI Desktop Assistant"
-
-          [Run]
-          Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Liz Coder Plus despues de instalar"; Flags: nowait postinstall shellexec skipifsilent
-
-          [UninstallDelete]
-          Type: filesandordirs; Name: "{app}"
-          "@
-
-          Set-Content -Path "installer-auto.iss" -Value $issContent
-          Write-Host "ISS file generated"
-
-          & $innoPath installer-auto.iss
+          # Compile
+          & $innoPath installer-build.iss
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Inno Setup compiler failed"
+            Write-Host "ERROR: Inno Setup failed"
             exit 1
           }
 
-          # Find the output
           $setupExe = Get-Item "installer-output\LizCoderPlus-Setup-*.exe" | Select-Object -First 1
           if ($setupExe) {
             Copy-Item $setupExe.FullName "LizCoderPlus-Setup.exe" -Force
-            $sizeMB = [math]::Round($setupExe.Length / 1MB, 2)
-            Write-Host "SUCCESS: Installer ($sizeMB MB)"
+            $mb = [math]::Round($setupExe.Length / 1MB, 2)
+            Write-Host "SUCCESS: LizCoderPlus-Setup.exe ($mb MB)"
           } else {
-            Write-Host "ERROR: Setup EXE not found"
+            Write-Host "ERROR: Setup not found"
             exit 1
           }
 
@@ -186,12 +120,5 @@ jobs:
         run: |
           $tag = "${{ github.event.inputs.version || 'v0.18.0' }}"
           $existing = gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            gh release delete $tag --yes
-          }
-          gh release create $tag `
-            LizCoderPlus-Setup.exe `
-            --title "Liz Coder Plus $tag" `
-            --notes "Instalador profesional de Windows. Descarga LizCoderPlus-Setup.exe, haz doble click para instalar." `
-            --prerelease
-          Write-Host "Release $tag created with installer"
+          if ($LASTEXITCODE -eq 0) { gh release delete $tag --yes }
+          gh release create $tag LizCoderPlus-Setup.exe --title "Liz Coder Plus $tag" --notes "Instalador profesional (.exe). Descarga y ejecuta LizCoderPlus-Setup.exe para instalar." --prerelease
