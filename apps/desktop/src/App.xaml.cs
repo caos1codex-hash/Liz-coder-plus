@@ -8,6 +8,7 @@
 
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using LizCoderPlus.Desktop.Views;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
