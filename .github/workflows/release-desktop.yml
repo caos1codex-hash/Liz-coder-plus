@@ -1,5 +1,5 @@
 # ============================================================
-# GitHub Actions: Build & Release WinUI 3 Desktop .exe
+# GitHub Actions: Build WinUI 3 Desktop .exe
 # ============================================================
 
 name: Build Desktop Release
@@ -16,7 +16,7 @@ on:
         default: '0.14.0'
 
 jobs:
-  build-windows:
+  build:
     name: Build Windows Desktop .exe
     runs-on: windows-latest
 
@@ -29,7 +29,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Pin to .NET 8 SDK
+      - name: Pin to .NET 8
         shell: pwsh
         run: |
           '{"sdk":{"version":"8.0.423","rollForward":"latestFeature"}}' | Out-File global.json -Encoding utf8
@@ -41,54 +41,27 @@ jobs:
 
       - name: Build and Publish
         shell: pwsh
-        continue-on-error: true
         run: |
           dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
           dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false -o publish-output
 
-      - name: List output and ZIP
+      - name: Create ZIP
         shell: pwsh
         run: |
-          echo "=== Files ==="
-          Get-ChildItem publish-output -ErrorAction SilentlyContinue | Select Name, Length
-          echo "=== EXEs ==="
-          Get-ChildItem publish-output -Filter "*.exe" -ErrorAction SilentlyContinue | Select Name, Length
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
+            $size = [math]::Round((Get-Item "publish-output\LizCoderPlus.Desktop.exe").Length / 1MB, 2)
+            echo "EXE: $size MB"
             Compress-Archive -Path publish-output\* -DestinationPath release.zip -Force
-            echo "ZIP OK: $([math]::Round((Get-Item release.zip).Length/1MB,2)) MB"
+            echo "ZIP: $([math]::Round((Get-Item release.zip).Length/1MB,2)) MB"
           } else {
             echo "ERROR: exe not found"
-            Get-ChildItem -Recurse apps/desktop/bin -Filter "*.exe" -ErrorAction SilentlyContinue | Select FullName
+            Get-ChildItem publish-output -ErrorAction SilentlyContinue | Select Name
             exit 1
           }
 
-      - name: Upload ZIP
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: LizCoderPlus-win-x64
           path: release.zip
           retention-days: 30
-
-  create-release:
-    name: Create GitHub Release
-    needs: build-windows
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: LizCoderPlus-win-x64
-          path: dist/
-
-      - name: Create Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create v0.14.0 dist/*.zip \
-            --repo ${{ github.repository }} \
-            --title "Liz Coder Plus v0.14.0" \
-            --notes "Liz Coder Plus v0.14.0 - Windows x64" 2>&1 || true
-          echo "Done!"
