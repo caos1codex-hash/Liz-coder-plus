@@ -71,7 +71,7 @@ public static class Program
             Application.Start(p =>
             {
                 Log("Creating App instance...");
-                return new App();
+                _ = new App();
             });
 
             Log("Application exited normally.");
