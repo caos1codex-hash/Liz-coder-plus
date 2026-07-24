@@ -154,7 +154,7 @@ jobs:
           Set-Content -Path "installer-auto.iss" -Value $issContent
           Write-Host "ISS file generated"
 
-          & $innoPath installer-auto.iss /Q
+          & $innoPath installer-auto.iss
           if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Inno Setup compiler failed"
             exit 1
