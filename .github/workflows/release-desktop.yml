@@ -78,8 +78,8 @@ jobs:
           }
 
       - name: Upload ZIP
-        if: always()
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: LizCoderPlus-win-x64
           path: release.zip
