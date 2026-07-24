@@ -77,34 +77,28 @@ public partial class App : Application
             _mainWindow = new MainWindow();
             File.AppendAllText(logPath, $"  MainWindow created\n");
 
-            // IMPORTANT: For unpackaged WinUI 3 apps, we MUST set the window
-            // to the AppWindow and configure its presenter explicitly
-            var appWindow = _mainWindow.GetAppWindow();
-            if (appWindow != null)
+            // Set window size and position using the AppWindow property
+            _mainWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+            _mainWindow.AppWindow.Title = "Liz Coder Plus — AI Desktop Assistant";
+            File.AppendAllText(logPath, $"  Window resized to 1200x800\n");
+
+            // Center on screen
+            try
             {
-                File.AppendAllText(logPath, $"  Got AppWindow, setting size...\n");
-
-                // Set window size: 1200x800
-                appWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
-
-                // Center the window on screen
                 var displayArea = DisplayArea.GetFromWindowId(
-                    appWindow.Id, DisplayAreaFallback.Primary);
+                    _mainWindow.AppWindow.Id, DisplayAreaFallback.Primary);
                 if (displayArea != null)
                 {
                     int x = (displayArea.WorkArea.Width - 1200) / 2;
                     int y = (displayArea.WorkArea.Height - 800) / 2;
-                    appWindow.Move(new Windows.Graphics.PointInt32(
+                    _mainWindow.AppWindow.Move(new Windows.Graphics.PointInt32(
                         Math.Max(0, x), Math.Max(0, y)));
+                    File.AppendAllText(logPath, $"  Window centered on screen\n");
                 }
-
-                File.AppendAllText(logPath, $"  Window positioned\n");
             }
-            else
+            catch (Exception ex2)
             {
-                File.AppendAllText(logPath, $"  WARNING: AppWindow was null, using fallback\n");
-                // Fallback: just set the WinUI Window properties
-                _mainWindow.AppWindow.Title = "Liz Coder Plus — AI Desktop Assistant";
+                File.AppendAllText(logPath, $"  Centering failed (non-fatal): {ex2.Message}\n");
             }
 
             // Activate the window (brings it to foreground and shows it)
