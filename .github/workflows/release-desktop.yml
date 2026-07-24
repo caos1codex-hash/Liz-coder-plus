@@ -32,33 +32,35 @@ jobs:
       - name: Pin to .NET 8 SDK
         shell: pwsh
         run: |
-          $globalJson = '{"sdk":{"version":"8.0.423","rollForward":"latestFeature"}}'
-          $globalJson | Out-File -FilePath global.json -Encoding utf8
+          '{"sdk":{"version":"8.0.423","rollForward":"latestFeature"}}' | Out-File global.json -Encoding utf8
           dotnet --version
 
       - name: Install workloads
         shell: pwsh
         run: dotnet workload install windows-desktop
 
-      - name: Restore
-        shell: pwsh
-        run: dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
-
-      - name: Publish
-        shell: pwsh
-        run: dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false
-
-      - name: Find .exe and create ZIP
+      - name: Restore, Build and Publish
         shell: pwsh
         run: |
-          $publishDir = "apps\desktop\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
-          $exe = Get-ChildItem -Path $publishDir -Filter "LizCoderPlus*.exe" | Select-Object -First 1
-          if ($exe) {
-            $size = [math]::Round($exe.Length / 1MB, 2)
-            echo "EXE FOUND: $($exe.Name) ($size MB)"
-            Compress-Archive -Path "$publishDir\*" -DestinationPath "LizCoderPlus-0.14.0-win-x64.zip" -Force
+          dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
+          dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false -o publish-output
+
+      - name: List output
+        shell: pwsh
+        run: |
+          echo "=== Files ==="
+          Get-ChildItem publish-output -ErrorAction SilentlyContinue | Select Name, Length
+          echo "=== EXEs ==="
+          Get-ChildItem publish-output -Filter "*.exe" -ErrorAction SilentlyContinue | Select Name, Length
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
+            Compress-Archive -Path publish-output\* -DestinationPath release.zip -Force
+            echo "ZIP OK"
           } else {
-            echo "ERROR: No .exe"
+            echo "ERROR: exe not found"
             exit 1
           }
 
@@ -66,7 +68,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LizCoderPlus-win-x64
-          path: LizCoderPlus-0.14.0-win-x64.zip
+          path: release.zip
           retention-days: 30
 
   create-release:
