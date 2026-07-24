@@ -57,8 +57,8 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # --- Install Windows App SDK workload ---
-      - name: Install Windows App SDK workload
-        run: dotnet workload install wasm-tools
+      - name: Install Windows Desktop workload
+        run: dotnet workload install windows-desktop
         continue-on-error: true
 
       # --- Restore NuGet packages ---
