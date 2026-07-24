@@ -39,28 +39,26 @@ jobs:
         shell: pwsh
         run: dotnet workload install windows-desktop
 
-      - name: Restore, Build and Publish
+      - name: Build and Publish
         shell: pwsh
+        continue-on-error: true
         run: |
           dotnet restore apps/desktop/LizCoderPlus.Desktop.csproj -r win-x64 -p:Platform=x64
           dotnet publish apps/desktop/LizCoderPlus.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishSingleFile=false -p:AppxPackage=false -o publish-output
 
-      - name: List output
+      - name: List output and ZIP
         shell: pwsh
         run: |
           echo "=== Files ==="
           Get-ChildItem publish-output -ErrorAction SilentlyContinue | Select Name, Length
           echo "=== EXEs ==="
           Get-ChildItem publish-output -Filter "*.exe" -ErrorAction SilentlyContinue | Select Name, Length
-
-      - name: Create ZIP
-        shell: pwsh
-        run: |
           if (Test-Path "publish-output\LizCoderPlus.Desktop.exe") {
             Compress-Archive -Path publish-output\* -DestinationPath release.zip -Force
-            echo "ZIP OK"
+            echo "ZIP OK: $([math]::Round((Get-Item release.zip).Length/1MB,2)) MB"
           } else {
             echo "ERROR: exe not found"
+            Get-ChildItem -Recurse apps/desktop/bin -Filter "*.exe" -ErrorAction SilentlyContinue | Select FullName
             exit 1
           }
 
