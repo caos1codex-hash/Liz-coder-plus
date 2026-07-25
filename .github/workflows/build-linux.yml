@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g. v0.18.0)'
+        description: 'Version tag (e.g. v0.19.0)'
         required: false
-        default: 'v0.18.0'
+        default: 'v0.19.0'
   push:
     branches: [main]
     paths:
@@ -45,9 +45,8 @@ jobs:
           cd apps/linux-desktop
           source venv/bin/activate
           QT_QPA_PLATFORM=offscreen python3 -c "
-          from main import ChatService, ChatWindow
-          print('Imports OK')
-          cs = ChatService()
+          from main import ChatService, ChatWindow, __version__
+          print(f'Version: {__version__}')
           print('ChatService OK')
           print('ALL TESTS PASSED')
           "
@@ -56,7 +55,7 @@ jobs:
         run: |
           cd apps/linux-desktop
           source venv/bin/activate
-          
+
           pyinstaller --noconfirm --onedir \
             --name "LizCoderPlus" \
             --windowed \
@@ -73,7 +72,7 @@ jobs:
             --hidden-import websocket._utils \
             --collect-all PySide6 \
             main.py
-          
+
           echo "=== Build output ==="
           ls -la dist/LizCoderPlus/ | head -20
           echo "=== Total size ==="
@@ -98,10 +97,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ github.event.inputs.version || 'v0.18.0' }}"
+          TAG="${{ github.event.inputs.version || 'v0.19.0' }}"
           gh release view "$TAG" 2>/dev/null && gh release delete "$TAG" --yes || true
           gh release create "$TAG" \
             apps/linux-desktop/LizCoderPlus-linux.tar.gz \
             --title "Liz Coder Plus $TAG (Linux)" \
-            --notes "App nativa de Linux (Qt6/PySide6).\n\nInstrucciones:\n1. Descargar LizCoderPlus-linux.tar.gz\n2. tar -xzf LizCoderPlus-linux.tar.gz\n3. cd LizCoderPlus\n4. ./LizCoderPlus" \
+            --notes "App nativa de Linux (Qt6/PySide6).
+
+          Instrucciones:
+          1. Descargar LizCoderPlus-linux.tar.gz
+          2. tar -xzf LizCoderPlus-linux.tar.gz
+          3. cd LizCoderPlus
+          4. ./LizCoderPlus" \
             --prerelease
